@@ -27,6 +27,19 @@ const io = new Server(server, {
 const rooms = new Map();
 const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS || 12000);
 const BATTLE_ROUND_SECONDS = Number(process.env.BATTLE_ROUND_SECONDS || 40);
+const RATE_LIMITS = {
+  roomCreate: { windowMs: 10000, max: 4 },
+  roomJoin: { windowMs: 10000, max: 8 },
+  roomJoinSpectator: { windowMs: 10000, max: 8 },
+  roomLeave: { windowMs: 5000, max: 10 },
+  readyToggle: { windowMs: 5000, max: 8 },
+  swapVote: { windowMs: 4000, max: 8 },
+  chatSend: { windowMs: 5000, max: 8 },
+  hostAction: { windowMs: 10000, max: 8 },
+  submitWord: { windowMs: 5000, max: 6 },
+  roundReset: { windowMs: 10000, max: 6 },
+  matchReset: { windowMs: 10000, max: 4 }
+};
 
 function createRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -237,6 +250,40 @@ function resolveWordValidationReason(reason) {
 
 function countRoomMembers(room) {
   return Number(Boolean(room.players[1].socketId)) + Number(Boolean(room.players[2].socketId)) + room.spectators.size;
+}
+
+function hitRateLimit(socket, key) {
+  const config = RATE_LIMITS[key];
+  if (!config) {
+    return false;
+  }
+
+  if (!socket.data.rateLimitStore) {
+    socket.data.rateLimitStore = new Map();
+  }
+
+  const now = Date.now();
+  const entry = socket.data.rateLimitStore.get(key);
+  if (!entry || now - entry.start >= config.windowMs) {
+    socket.data.rateLimitStore.set(key, { start: now, count: 1 });
+    return false;
+  }
+
+  if (entry.count >= config.max) {
+    return true;
+  }
+
+  entry.count += 1;
+  socket.data.rateLimitStore.set(key, entry);
+  return false;
+}
+
+function replyRateLimited(socket, ack) {
+  if (typeof ack === 'function') {
+    ack({ ok: false, errorKey: 'tooManyRequests' });
+    return;
+  }
+  io.to(socket.id).emit('room:error', { key: 'tooManyRequests' });
 }
 
 async function validateBattleWord(room, word) {
@@ -486,11 +533,16 @@ io.on('connection', (socket) => {
   socket.data.playerName = '';
   socket.data.role = null;
   socket.data.clientId = '';
+  socket.data.rateLimitStore = new Map();
 
   socket.on('room:create', (payloadOrAck, maybeAck) => {
-    leaveRoom(socket, { reason: 'leave' });
     const payload = typeof payloadOrAck === 'function' ? {} : payloadOrAck || {};
     const ack = typeof payloadOrAck === 'function' ? payloadOrAck : maybeAck;
+    if (hitRateLimit(socket, 'roomCreate')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
+    leaveRoom(socket, { reason: 'leave' });
 
     let code = createRoomCode();
     while (rooms.has(code)) {
@@ -526,6 +578,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:join', (payload, ack) => {
+    if (hitRateLimit(socket, 'roomJoin')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     leaveRoom(socket, { reason: 'leave' });
 
     const roomCode = sanitizeRoomCode(payload?.roomCode);
@@ -610,6 +666,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:join-spectator', (payload, ack) => {
+    if (hitRateLimit(socket, 'roomJoinSpectator')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     leaveRoom(socket, { reason: 'leave' });
 
     const roomCode = sanitizeRoomCode(payload?.roomCode);
@@ -645,11 +705,19 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:leave', (ack) => {
+    if (hitRateLimit(socket, 'roomLeave')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     leaveRoom(socket, { reason: 'leave' });
     ack?.({ ok: true });
   });
 
   socket.on('player:toggle-ready', (payload) => {
+    if (hitRateLimit(socket, 'readyToggle')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -692,6 +760,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('battle:swap', () => {
+    if (hitRateLimit(socket, 'swapVote')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -735,6 +807,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chat:send', (payload) => {
+    if (hitRateLimit(socket, 'chatSend')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     const role = socket.data.role;
@@ -781,6 +857,10 @@ io.on('connection', (socket) => {
 
   socket.on('room:lock-toggle', (payloadOrAck, maybeAck) => {
     const ack = typeof payloadOrAck === 'function' ? payloadOrAck : maybeAck;
+    if (hitRateLimit(socket, 'hostAction')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -810,6 +890,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:transfer-host', (payload, ack) => {
+    if (hitRateLimit(socket, 'hostAction')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -856,6 +940,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:kick', (payload, ack) => {
+    if (hitRateLimit(socket, 'hostAction')) {
+      replyRateLimited(socket, ack);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -915,6 +1003,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('battle:submit', async (payload) => {
+    if (hitRateLimit(socket, 'submitWord')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode || !playerId) {
@@ -978,6 +1070,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('round:reset', () => {
+    if (hitRateLimit(socket, 'roundReset')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode) {
@@ -999,6 +1095,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('match:reset', () => {
+    if (hitRateLimit(socket, 'matchReset')) {
+      replyRateLimited(socket);
+      return;
+    }
     const roomCode = socket.data.roomCode;
     const playerId = socket.data.playerId;
     if (!roomCode) {

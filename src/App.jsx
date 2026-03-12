@@ -6,6 +6,7 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
 const IDENTITY_STORAGE_KEY = 'word-clash-identity';
 const CLIENT_ID_STORAGE_KEY = 'word-clash-client-id';
 const THEME_STORAGE_KEY = 'word-clash-theme';
+const LANG_STORAGE_KEY = 'word-clash-lang';
 
 const EMPTY_ROOM_STATE = {
   roomCode: '',
@@ -151,7 +152,8 @@ const I18N = {
       cannotKickSelf: '不能移除自己。',
       targetNotFound: '目标玩家不存在或已离线。',
       kickedByHost: '你已被房主 {hostName} 移出房间。',
-      invalidLetter: '请输入一个有效英文字母。'
+      invalidLetter: '请输入一个有效英文字母。',
+      tooManyRequests: '操作过于频繁，请稍后重试。'
     },
     toast: {
       createdRoom: '房间 {roomCode} 已创建。',
@@ -291,7 +293,8 @@ const I18N = {
       cannotKickSelf: 'You cannot remove yourself.',
       targetNotFound: 'Target player is offline or not found.',
       kickedByHost: 'You were removed by host {hostName}.',
-      invalidLetter: 'Please enter one valid English letter.'
+      invalidLetter: 'Please enter one valid English letter.',
+      tooManyRequests: 'Too many actions. Please slow down and try again.'
     },
     toast: {
       createdRoom: 'Room {roomCode} created.',
@@ -431,7 +434,8 @@ const I18N = {
       cannotKickSelf: '自分自身を退出させることはできません。',
       targetNotFound: '対象プレイヤーが見つからないかオフラインです。',
       kickedByHost: 'ホスト {hostName} によりルームから退出されました。',
-      invalidLetter: '有効な英字1文字を入力してください。'
+      invalidLetter: '有効な英字1文字を入力してください。',
+      tooManyRequests: '操作が多すぎます。少し待ってから再試行してください。'
     },
     toast: {
       createdRoom: 'ルーム {roomCode} を作成しました。',
@@ -458,6 +462,31 @@ const LANGUAGE_OPTIONS = [
   { value: 'en', label: 'English' },
   { value: 'ja', label: '日本語' }
 ];
+
+function normalizeLanguage(value) {
+  const next = String(value || '').trim().toLowerCase();
+  return next === 'en' || next === 'ja' ? next : 'zh';
+}
+
+const TIME_FORMATTER_CACHE = new Map();
+
+function formatMessageTime(ts, lang) {
+  const timestamp = Number(ts);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '--:--';
+  }
+  const locale = lang === 'en' ? 'en-US' : lang === 'ja' ? 'ja-JP' : 'zh-CN';
+  let formatter = TIME_FORMATTER_CACHE.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    TIME_FORMATTER_CACHE.set(locale, formatter);
+  }
+  return formatter.format(new Date(timestamp));
+}
 
 const STATUS_COLOR = {
   info: 'text-cyan-100 border-cyan-300/45 bg-cyan-500/10',
@@ -752,7 +781,12 @@ function PlayerPanel({
 }
 
 export default function App() {
-  const [lang, setLang] = useState('zh');
+  const [lang, setLang] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'zh';
+    }
+    return normalizeLanguage(window.localStorage.getItem(LANG_STORAGE_KEY));
+  });
   const [theme, setTheme] = useState(() => {
     if (typeof window === 'undefined') {
       return 'neon';
@@ -800,6 +834,8 @@ export default function App() {
   const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [showMobileSystem, setShowMobileSystem] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [unreadSystemCount, setUnreadSystemCount] = useState(0);
   const [showCompactActions, setShowCompactActions] = useState(false);
   const [pendingHostAction, setPendingHostAction] = useState(null);
   const [scoreFlash, setScoreFlash] = useState(null);
@@ -819,6 +855,10 @@ export default function App() {
   const leftLetterSlotRef = useRef(null);
   const rightLetterSlotRef = useRef(null);
   const chatListRef = useRef(null);
+  const previousChatCountRef = useRef(0);
+  const previousSystemCountRef = useRef(0);
+  const chatUnreadSeededRef = useRef(false);
+  const systemUnreadSeededRef = useRef(false);
   const roomCodeRef = useRef('');
   const roomRoleRef = useRef(null);
   const playerIdRef = useRef(null);
@@ -1006,6 +1046,20 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const normalized = normalizeLanguage(lang);
+    if (normalized !== lang) {
+      setLang(normalized);
+      return;
+    }
+    window.localStorage.setItem(LANG_STORAGE_KEY, normalized);
+    const htmlLang = normalized === 'zh' ? 'zh-CN' : normalized === 'ja' ? 'ja-JP' : 'en-US';
+    document.documentElement.setAttribute('lang', htmlLang);
+  }, [lang]);
+
+  useEffect(() => {
     roomCodeRef.current = roomCode;
   }, [roomCode]);
 
@@ -1166,6 +1220,76 @@ export default function App() {
       setShowMobileSystem(false);
     }
   }, [isDesktop, showMobileSystem]);
+
+  useEffect(() => {
+    if (!roomCode) {
+      setUnreadChatCount(0);
+      setUnreadSystemCount(0);
+      previousChatCountRef.current = 0;
+      previousSystemCountRef.current = 0;
+      chatUnreadSeededRef.current = false;
+      systemUnreadSeededRef.current = false;
+      return;
+    }
+    setUnreadChatCount(0);
+    setUnreadSystemCount(0);
+    previousChatCountRef.current = chatEntries.length;
+    previousSystemCountRef.current = systemEntries.length;
+    chatUnreadSeededRef.current = false;
+    systemUnreadSeededRef.current = false;
+  }, [roomCode]);
+
+  useEffect(() => {
+    if (!roomCode) {
+      return;
+    }
+
+    const previous = previousChatCountRef.current;
+    const current = chatEntries.length;
+    if (!chatUnreadSeededRef.current) {
+      previousChatCountRef.current = current;
+      chatUnreadSeededRef.current = true;
+      if (isDesktop || showMobileChat) {
+        setUnreadChatCount(0);
+      }
+      return;
+    }
+    const appended = Math.max(0, current - previous);
+
+    if (isDesktop || showMobileChat) {
+      setUnreadChatCount(0);
+    } else if (appended > 0) {
+      setUnreadChatCount((count) => Math.min(99, count + appended));
+    }
+
+    previousChatCountRef.current = current;
+  }, [chatEntries.length, isDesktop, roomCode, showMobileChat]);
+
+  useEffect(() => {
+    if (!roomCode) {
+      return;
+    }
+
+    const previous = previousSystemCountRef.current;
+    const current = systemEntries.length;
+    if (!systemUnreadSeededRef.current) {
+      previousSystemCountRef.current = current;
+      systemUnreadSeededRef.current = true;
+      if (isDesktop || showMobileSystem) {
+        setUnreadSystemCount(0);
+      }
+      return;
+    }
+    const appended = Math.max(0, current - previous);
+
+    if (isDesktop || showMobileSystem) {
+      setUnreadSystemCount(0);
+    } else if (appended > 0) {
+      setUnreadSystemCount((count) => Math.min(99, count + appended));
+    }
+
+    previousSystemCountRef.current = current;
+  }, [isDesktop, roomCode, showMobileSystem, systemEntries.length]);
 
   useEffect(() => {
     const node = chatListRef.current;
@@ -1568,7 +1692,7 @@ export default function App() {
               <span className="font-semibold">{text.languageLabel}</span>
               <select
                 value={lang}
-                onChange={(event) => setLang(event.target.value)}
+                onChange={(event) => setLang(normalizeLanguage(event.target.value))}
                 className="neon-input rounded-lg px-2 py-1 text-xs font-semibold"
               >
                 {LANGUAGE_OPTIONS.map((option) => (
@@ -2207,7 +2331,12 @@ export default function App() {
                   onClick={() => setShowMobileChat((prev) => !prev)}
                   className="neo-btn rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-slate-100 xl:hidden"
                 >
-                  {showMobileChat ? text.hideChat : text.showChat}
+                  <span>{showMobileChat ? text.hideChat : text.showChat}</span>
+                  {!showMobileChat && unreadChatCount > 0 && (
+                    <span className="ml-1.5 rounded-full border border-cyan-200/45 bg-cyan-500/20 px-1.5 py-0.5 text-[10px] leading-none text-cyan-100">
+                      {unreadChatCount > 99 ? '99+' : unreadChatCount}
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -2228,10 +2357,15 @@ export default function App() {
                                 : 'border-white/20 bg-slate-900/45 text-slate-100'
                             }`}
                           >
-                            <p className="mb-1 text-[11px] font-semibold opacity-90">
-                              {entry.playerName || resolvePlayerName(entry.player)}
-                              {entry.role === 'spectator' ? ` · ${text.spectator}` : ''}
-                            </p>
+                            <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-semibold opacity-90">
+                              <span className="truncate">
+                                {entry.playerName || resolvePlayerName(entry.player)}
+                                {entry.role === 'spectator' ? ` · ${text.spectator}` : ''}
+                              </span>
+                              <span className="shrink-0 text-[10px] font-medium opacity-70">
+                                {formatMessageTime(entry.ts, lang)}
+                              </span>
+                            </div>
                             <p className="break-words leading-relaxed">{entry.text}</p>
                           </div>
                         </div>
@@ -2268,7 +2402,12 @@ export default function App() {
                   onClick={() => setShowMobileSystem((prev) => !prev)}
                   className="neo-btn rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-slate-100 xl:hidden"
                 >
-                  {showMobileSystem ? text.hideSystem : text.showSystem}
+                  <span>{showMobileSystem ? text.hideSystem : text.showSystem}</span>
+                  {!showMobileSystem && unreadSystemCount > 0 && (
+                    <span className="ml-1.5 rounded-full border border-amber-200/45 bg-amber-500/18 px-1.5 py-0.5 text-[10px] leading-none text-amber-100">
+                      {unreadSystemCount > 99 ? '99+' : unreadSystemCount}
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -2279,7 +2418,10 @@ export default function App() {
                   )}
                   {systemEntries.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-cyan-300/20 bg-cyan-500/8 px-3 py-2 text-xs text-cyan-100/90">
-                      {getStatusText({ key: entry.key, params: entry.params || {} }, text)}
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-100/75">
+                        {formatMessageTime(entry.ts, lang)}
+                      </div>
+                      <div>{getStatusText({ key: entry.key, params: entry.params || {} }, text)}</div>
                     </div>
                   ))}
                 </div>
@@ -2312,7 +2454,10 @@ export default function App() {
                   )}
                   {systemEntries.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-cyan-300/20 bg-cyan-500/8 px-3 py-2 text-xs text-cyan-100/90">
-                      {getStatusText({ key: entry.key, params: entry.params || {} }, text)}
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-100/75">
+                        {formatMessageTime(entry.ts, lang)}
+                      </div>
+                      <div>{getStatusText({ key: entry.key, params: entry.params || {} }, text)}</div>
                     </div>
                   ))}
                 </div>
