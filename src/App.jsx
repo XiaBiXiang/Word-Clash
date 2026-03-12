@@ -1,4 +1,4 @@
-import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
+import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'framer-motion';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { validateEnglishWord } from './utils/wordValidation.js';
@@ -9,6 +9,20 @@ const CLIENT_ID_STORAGE_KEY = 'word-clash-client-id';
 const THEME_STORAGE_KEY = 'word-clash-theme';
 const LANG_STORAGE_KEY = 'word-clash-lang';
 const AI_ROUND_SECONDS = 24;
+const AI_DIFFICULTY_CONFIG = {
+  easy: {
+    roundSeconds: 32,
+    letterPool: 'AAAAAEEEEIIIIOOOOUUULLNRSTDM'
+  },
+  normal: {
+    roundSeconds: AI_ROUND_SECONDS,
+    letterPool: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  },
+  hard: {
+    roundSeconds: 16,
+    letterPool: 'QQZZXXJJVVKKBBCCPPFFMMWWHHYYTR'
+  }
+};
 
 const EMPTY_ROOM_STATE = {
   roomCode: '',
@@ -69,6 +83,10 @@ const I18N = {
     aiReset: '重置人机',
     aiExit: '返回大厅',
     aiRound: '回合',
+    aiDifficulty: '难度',
+    aiDifficultyEasy: '简单',
+    aiDifficultyNormal: '普通',
+    aiDifficultyHard: '困难',
     copy: '复制',
     leaveHint: '将房间码发给另一位玩家后即可联机。',
     roomInput: '输入 6 位房间码',
@@ -243,6 +261,10 @@ const I18N = {
     aiReset: 'Reset AI',
     aiExit: 'Back To Lobby',
     aiRound: 'Round',
+    aiDifficulty: 'Difficulty',
+    aiDifficultyEasy: 'Easy',
+    aiDifficultyNormal: 'Normal',
+    aiDifficultyHard: 'Hard',
     copy: 'Copy',
     leaveHint: 'Share this room code with your opponent to play online.',
     roomInput: 'Enter 6-char room code',
@@ -417,6 +439,10 @@ const I18N = {
     aiReset: 'AIリセット',
     aiExit: 'ロビーへ戻る',
     aiRound: 'ラウンド',
+    aiDifficulty: '難易度',
+    aiDifficultyEasy: 'やさしい',
+    aiDifficultyNormal: '普通',
+    aiDifficultyHard: '難しい',
     copy: 'コピー',
     leaveHint: 'ルームコードを相手に共有してオンライン対戦できます。',
     roomInput: '6桁のルームコードを入力',
@@ -669,9 +695,13 @@ function createClientId() {
   return `wc-${Date.now().toString(36)}-${entropy}`;
 }
 
-function randomEnglishLetter() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return chars[Math.floor(Math.random() * chars.length)];
+function getAiDifficultyConfig(level) {
+  return AI_DIFFICULTY_CONFIG[level] || AI_DIFFICULTY_CONFIG.normal;
+}
+
+function randomLetterFromPool(pool) {
+  const source = String(pool || '').trim() || AI_DIFFICULTY_CONFIG.normal.letterPool;
+  return source[Math.floor(Math.random() * source.length)];
 }
 
 function sanitizeSingleLetter(value) {
@@ -938,10 +968,12 @@ export default function App() {
   const [socketState, setSocketState] = useState('connecting');
   const [roomState, setRoomState] = useState(EMPTY_ROOM_STATE);
   const [inAiMode, setInAiMode] = useState(false);
+  const [aiDifficulty, setAiDifficulty] = useState('normal');
   const [aiState, setAiState] = useState(EMPTY_AI_STATE);
   const [aiLocalLetter, setAiLocalLetter] = useState('');
   const [aiWord, setAiWord] = useState('');
   const [aiFeedback, setAiFeedback] = useState(null);
+  const [aiFeedbackTick, setAiFeedbackTick] = useState(0);
   const [clientId] = useState(() => {
     if (typeof window === 'undefined') {
       return createClientId();
@@ -974,6 +1006,7 @@ export default function App() {
   const [word, setWord] = useState('');
   const [lobbyStatus, setLobbyStatus] = useState({ type: 'info', key: 'lobbyHint' });
   const [feedback, setFeedback] = useState(null);
+  const [feedbackTick, setFeedbackTick] = useState(0);
   const [burstSeed, setBurstSeed] = useState(1);
   const [busy, setBusy] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
@@ -987,6 +1020,7 @@ export default function App() {
   const [pendingHostAction, setPendingHostAction] = useState(null);
   const [scoreFlash, setScoreFlash] = useState(null);
   const [swapPulseTick, setSwapPulseTick] = useState(0);
+  const [aiSwapPulseTick, setAiSwapPulseTick] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [toasts, setToasts] = useState([]);
   const [roomUiReady, setRoomUiReady] = useState(false);
@@ -995,15 +1029,9 @@ export default function App() {
   const [isDesktop, setIsDesktop] = useState(
     typeof window === 'undefined' ? true : window.innerWidth >= 768
   );
-  const [isCompactPhone, setIsCompactPhone] = useState(
-    typeof window === 'undefined' ? false : window.innerWidth <= 375
-  );
-  const [swapDistance, setSwapDistance] = useState(148);
 
   const socketRef = useRef(null);
   const lastStatusRef = useRef('');
-  const leftLetterSlotRef = useRef(null);
-  const rightLetterSlotRef = useRef(null);
   const chatListRef = useRef(null);
   const previousChatCountRef = useRef(0);
   const previousSystemCountRef = useRef(0);
@@ -1018,6 +1046,15 @@ export default function App() {
   const text = I18N[lang];
 
   const particles = useMemo(() => createParticles(burstSeed), [burstSeed]);
+  const currentAiDifficulty = useMemo(() => getAiDifficultyConfig(aiDifficulty), [aiDifficulty]);
+  const aiDifficultyOptions = useMemo(
+    () => [
+      { value: 'easy', label: text.aiDifficultyEasy },
+      { value: 'normal', label: text.aiDifficultyNormal },
+      { value: 'hard', label: text.aiDifficultyHard }
+    ],
+    [text.aiDifficultyEasy, text.aiDifficultyHard, text.aiDifficultyNormal]
+  );
   const isBattleDisplayPhase = roomState.phase === 'battle' || roomState.phase === 'round_end';
   const playerNames = roomState.playerNames || EMPTY_ROOM_STATE.playerNames;
   const chatEntries = roomState.chat || EMPTY_ROOM_STATE.chat;
@@ -1047,14 +1084,21 @@ export default function App() {
   }
 
   function resetAiState(keepScore = false) {
+    const difficultyConfig = getAiDifficultyConfig(aiDifficulty);
     setAiState((prev) => ({
       ...EMPTY_AI_STATE,
+      roundDurationSec: difficultyConfig.roundSeconds,
       score: keepScore ? prev.score : 0,
       round: keepScore ? prev.round : 1
     }));
     setAiLocalLetter('');
     setAiWord('');
     setAiFeedback(null);
+  }
+
+  function triggerAiFeedback(type) {
+    setAiFeedback(type);
+    setAiFeedbackTick((prev) => prev + 1);
   }
 
   useEffect(() => {
@@ -1218,6 +1262,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!inAiMode) {
+      return;
+    }
+    const difficultyConfig = getAiDifficultyConfig(aiDifficulty);
+    setAiState((prev) => {
+      if (prev.phase !== 'setup') {
+        return prev;
+      }
+      return {
+        ...prev,
+        roundDurationSec: difficultyConfig.roundSeconds
+      };
+    });
+  }, [aiDifficulty, inAiMode]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -1295,7 +1355,6 @@ export default function App() {
   useEffect(() => {
     function handleResize() {
       setIsDesktop(window.innerWidth >= 768);
-      setIsCompactPhone(window.innerWidth <= 375);
     }
 
     window.addEventListener('resize', handleResize);
@@ -1324,50 +1383,6 @@ export default function App() {
   }, [roomCode]);
 
   useEffect(() => {
-    if (!roomCode || !roomUiReady) {
-      return undefined;
-    }
-
-    function measureSwapDistance() {
-      const left = leftLetterSlotRef.current;
-      const right = rightLetterSlotRef.current;
-      if (!left || !right) {
-        return;
-      }
-      const leftRect = left.getBoundingClientRect();
-      const rightRect = right.getBoundingClientRect();
-      const leftCenter = leftRect.left + leftRect.width / 2;
-      const rightCenter = rightRect.left + rightRect.width / 2;
-      const distance = rightCenter - leftCenter;
-      if (Number.isFinite(distance) && distance > 0) {
-        setSwapDistance(distance);
-      }
-    }
-
-    const rafId = window.requestAnimationFrame(measureSwapDistance);
-    const left = leftLetterSlotRef.current;
-    const right = rightLetterSlotRef.current;
-    let observer = null;
-
-    if (typeof ResizeObserver !== 'undefined' && left && right) {
-      observer = new ResizeObserver(() => {
-        measureSwapDistance();
-      });
-      observer.observe(left);
-      observer.observe(right);
-    }
-
-    window.addEventListener('resize', measureSwapDistance);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', measureSwapDistance);
-      if (observer) {
-        observer.disconnect();
-      }
-    };
-  }, [isCompactPhone, isDesktop, roomCode, roomState.phase, roomUiReady, showCompactActions, showMobileHistory]);
-
-  useEffect(() => {
     if (!roomState.status?.type) {
       return;
     }
@@ -1387,6 +1402,7 @@ export default function App() {
 
     if (roomState.status.type === 'success') {
       setFeedback('success');
+      setFeedbackTick((prev) => prev + 1);
       setBurstSeed((prev) => prev + 1);
       const scorer = Number(roomState.status?.params?.player);
       if (scorer === 1 || scorer === 2) {
@@ -1402,6 +1418,7 @@ export default function App() {
     }
     if (roomState.status.type === 'error') {
       setFeedback('error');
+      setFeedbackTick((prev) => prev + 1);
     }
   }, [playerId, roomRole, roomState.playerNames, roomState.status, text.player]);
 
@@ -1646,6 +1663,44 @@ export default function App() {
       : inAiMode && aiState.phase === 'countdown' && aiState.countdown !== null
       ? aiState.countdown
       : null;
+  const wordInputAnimate = useMemo(() => {
+    if (feedback === 'error') {
+      return { x: [0, -10, 9, -8, 6, -4, 2, 0] };
+    }
+    if (feedback === 'success') {
+      return { scale: [1, 1.02, 1] };
+    }
+    return { x: 0, scale: 1 };
+  }, [feedback, feedbackTick]);
+  const aiWordInputAnimate = useMemo(() => {
+    if (aiFeedback === 'error') {
+      return { x: [0, -9, 8, -7, 5, -3, 0] };
+    }
+    if (aiFeedback === 'success') {
+      return { scale: [1, 1.02, 1] };
+    }
+    return { x: 0, scale: 1 };
+  }, [aiFeedback, aiFeedbackTick]);
+  const roomSwapTileAnimate = useMemo(() => {
+    if (swapPulseTick <= 0) {
+      return { scale: 1, rotateY: 0, filter: 'brightness(1)' };
+    }
+    return {
+      scale: [1, 1.1, 1],
+      rotateY: [0, 92, 0],
+      filter: ['brightness(1)', 'brightness(1.18)', 'brightness(1)']
+    };
+  }, [swapPulseTick]);
+  const aiSwapTileAnimate = useMemo(() => {
+    if (aiSwapPulseTick <= 0) {
+      return { scale: 1, rotateY: 0, filter: 'brightness(1)' };
+    }
+    return {
+      scale: [1, 1.1, 1],
+      rotateY: [0, 92, 0],
+      filter: ['brightness(1)', 'brightness(1.18)', 'brightness(1)']
+    };
+  }, [aiSwapPulseTick]);
 
   function applyActionError(errorKey) {
     setRoomState((prev) => ({
@@ -1656,6 +1711,7 @@ export default function App() {
 
   function openAiMode() {
     clearAiSetupTimers();
+    setAiSwapPulseTick(0);
     setInAiMode(true);
     resetAiState(false);
     setLobbyStatus({ type: 'info', key: 'aiSetupHint' });
@@ -1664,6 +1720,7 @@ export default function App() {
   function exitAiMode() {
     clearAiSetupTimers();
     setInAiMode(false);
+    setAiSwapPulseTick(0);
     resetAiState(false);
     setLobbyStatus({ type: 'info', key: 'lobbyHint' });
   }
@@ -1679,14 +1736,15 @@ export default function App() {
         ...prev,
         status: { type: 'error', key: 'invalidLetter' }
       }));
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       return;
     }
 
     clearAiSetupTimers();
-    const botLetter = randomEnglishLetter();
+    const botLetter = randomLetterFromPool(currentAiDifficulty.letterPool);
     setAiWord('');
     setAiFeedback(null);
+    setAiSwapPulseTick(0);
     setAiState((prev) => ({
       ...prev,
       phase: 'countdown',
@@ -1694,7 +1752,7 @@ export default function App() {
       swapped: false,
       letters: { 1: playerLetter, 2: botLetter },
       battleSecondsLeft: null,
-      roundDurationSec: AI_ROUND_SECONDS,
+      roundDurationSec: currentAiDifficulty.roundSeconds,
       status: { type: 'info', key: 'aiCountdownStart' }
     }));
 
@@ -1725,7 +1783,7 @@ export default function App() {
             ...prev,
             phase: 'battle',
             countdown: null,
-            battleSecondsLeft: AI_ROUND_SECONDS,
+            battleSecondsLeft: currentAiDifficulty.roundSeconds,
             status: { type: 'info', key: 'battleReady' }
           };
         });
@@ -1737,6 +1795,7 @@ export default function App() {
     if (!inAiMode || aiState.phase !== 'battle') {
       return;
     }
+    setAiSwapPulseTick((prev) => prev + 1);
     setAiState((prev) => ({
       ...prev,
       swapped: !prev.swapped,
@@ -1755,7 +1814,7 @@ export default function App() {
     const rightLetter = aiState.swapped ? aiState.letters[1] : aiState.letters[2];
 
     if (rawWord.length < 4) {
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       setAiState((prev) => ({
         ...prev,
         status: { type: 'error', key: 'invalidLength' }
@@ -1764,7 +1823,7 @@ export default function App() {
     }
 
     if (!/^[a-z]+$/.test(rawWord)) {
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       setAiState((prev) => ({
         ...prev,
         status: { type: 'error', key: 'onlyLetters' }
@@ -1773,7 +1832,7 @@ export default function App() {
     }
 
     if (!rawWord.startsWith(String(leftLetter || '').toLowerCase())) {
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       setAiState((prev) => ({
         ...prev,
         status: {
@@ -1786,7 +1845,7 @@ export default function App() {
     }
 
     if (!rawWord.endsWith(String(rightLetter || '').toLowerCase())) {
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       setAiState((prev) => ({
         ...prev,
         status: {
@@ -1803,7 +1862,7 @@ export default function App() {
 
     if (!validationResult.valid) {
       const key = resolveValidationReason(validationResult.reason);
-      setAiFeedback('error');
+      triggerAiFeedback('error');
       setAiState((prev) => {
         if (prev.phase !== 'battle' || prev.round !== roundSnapshot) {
           return prev;
@@ -1816,7 +1875,7 @@ export default function App() {
       return;
     }
 
-    setAiFeedback('success');
+    triggerAiFeedback('success');
     setBurstSeed((prev) => prev + 1);
     setAiWord('');
     setAiState((prev) => {
@@ -1845,6 +1904,7 @@ export default function App() {
       return;
     }
     clearAiSetupTimers();
+    setAiSwapPulseTick(0);
     setAiLocalLetter('');
     setAiWord('');
     setAiFeedback(null);
@@ -1855,6 +1915,7 @@ export default function App() {
       swapped: false,
       letters: { 1: '', 2: '' },
       battleSecondsLeft: null,
+      roundDurationSec: currentAiDifficulty.roundSeconds,
       round: prev.round + 1,
       status: { type: 'info', key: 'aiRoundReset' }
     }));
@@ -1865,10 +1926,14 @@ export default function App() {
       return;
     }
     clearAiSetupTimers();
-    setAiState(EMPTY_AI_STATE);
+    setAiState({
+      ...EMPTY_AI_STATE,
+      roundDurationSec: currentAiDifficulty.roundSeconds
+    });
     setAiLocalLetter('');
     setAiWord('');
     setAiFeedback(null);
+    setAiSwapPulseTick(0);
   }
 
   function createRoom() {
@@ -2345,6 +2410,23 @@ export default function App() {
                 <span className="rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-100">
                   {text.aiRound}: {aiState.round}
                 </span>
+                <div className="flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/10 px-2 py-1">
+                  <span className="px-1 text-[11px] font-semibold text-cyan-100">{text.aiDifficulty}</span>
+                  {aiDifficultyOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setAiDifficulty(option.value)}
+                      className={`neo-btn rounded-md border px-2 py-1 text-[11px] font-semibold transition ${
+                        aiDifficulty === option.value
+                          ? 'border-cyan-200/70 bg-cyan-500/26 text-cyan-100'
+                          : 'border-white/20 bg-white/8 text-slate-200 hover:bg-white/14'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
                 <button
                   type="button"
                   onClick={resetAiMatch}
@@ -2414,28 +2496,49 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-[80px_minmax(0,1fr)_80px] items-start gap-2 sm:grid-cols-[100px_minmax(220px,1fr)_100px] sm:gap-3">
-                  <div className="mx-auto text-center">
-                    <motion.div
-                      className={`letter-tile ${isDesktop ? '' : 'compact'}`}
-                      animate={{ x: aiState.swapped ? 84 : 0 }}
-                      transition={{ type: 'spring', stiffness: 220, damping: 18 }}
-                    >
-                      {aiState.phase === 'setup' ? '?' : aiState.letters[1] || '?'}
-                    </motion.div>
-                    <p className="mt-2 text-[10px] tracking-[0.15em] text-slate-400 sm:text-xs">{text.startLetter}</p>
-                  </div>
+                <LayoutGroup id="ai-letter-swap">
+                  <div className="grid grid-cols-[80px_minmax(0,1fr)_80px] items-start gap-2 sm:grid-cols-[100px_minmax(220px,1fr)_100px] sm:gap-3">
+                    <div className="relative mx-auto h-28 w-20 md:h-36 md:w-28">
+                      <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
+                        {aiState.phase === 'setup' ? (
+                          <motion.div className={`letter-tile ${isDesktop ? '' : 'compact'}`}>?</motion.div>
+                        ) : !aiState.swapped ? (
+                          <motion.div
+                            layoutId="ai-letter-1"
+                            className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                            animate={aiSwapTileAnimate}
+                            transition={{
+                              layout: { type: 'spring', stiffness: 250, damping: 22 },
+                              duration: 0.42,
+                              ease: 'easeOut'
+                            }}
+                          >
+                            {aiState.letters[1] || '?'}
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            layoutId="ai-letter-2"
+                            className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                            animate={aiSwapTileAnimate}
+                            transition={{
+                              layout: { type: 'spring', stiffness: 250, damping: 22 },
+                              duration: 0.42,
+                              ease: 'easeOut'
+                            }}
+                          >
+                            {aiState.letters[2] || '?'}
+                          </motion.div>
+                        )}
+                      </div>
+                      <p className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 sm:w-full sm:text-xs">
+                        {text.startLetter}
+                      </p>
+                    </div>
 
-                  <form onSubmit={submitAiWord}>
+                    <form onSubmit={submitAiWord}>
                     <motion.div
                       className="relative"
-                      animate={
-                        aiFeedback === 'error'
-                          ? { x: [0, -9, 8, -7, 5, -3, 0] }
-                          : aiFeedback === 'success'
-                          ? { scale: [1, 1.02, 1] }
-                          : { x: 0, scale: 1 }
-                      }
+                      animate={aiWordInputAnimate}
                       transition={{ duration: 0.42 }}
                     >
                       <input
@@ -2488,19 +2591,46 @@ export default function App() {
                         {text.submit}
                       </button>
                     </div>
-                  </form>
+                    </form>
 
-                  <div className="mx-auto text-center">
-                    <motion.div
-                      className={`letter-tile ${isDesktop ? '' : 'compact'}`}
-                      animate={{ x: aiState.swapped ? -84 : 0 }}
-                      transition={{ type: 'spring', stiffness: 220, damping: 18 }}
-                    >
-                      {aiState.phase === 'setup' ? '?' : aiState.letters[2] || '?'}
-                    </motion.div>
-                    <p className="mt-2 text-[10px] tracking-[0.15em] text-slate-400 sm:text-xs">{text.endLetter}</p>
+                    <div className="relative mx-auto h-28 w-20 md:h-36 md:w-28">
+                      <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
+                        {aiState.phase === 'setup' ? (
+                          <motion.div className={`letter-tile ${isDesktop ? '' : 'compact'}`}>?</motion.div>
+                        ) : aiState.swapped ? (
+                          <motion.div
+                            layoutId="ai-letter-1"
+                            className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                            animate={aiSwapTileAnimate}
+                            transition={{
+                              layout: { type: 'spring', stiffness: 250, damping: 22 },
+                              duration: 0.42,
+                              ease: 'easeOut'
+                            }}
+                          >
+                            {aiState.letters[1] || '?'}
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            layoutId="ai-letter-2"
+                            className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                            animate={aiSwapTileAnimate}
+                            transition={{
+                              layout: { type: 'spring', stiffness: 250, damping: 22 },
+                              duration: 0.42,
+                              ease: 'easeOut'
+                            }}
+                          >
+                            {aiState.letters[2] || '?'}
+                          </motion.div>
+                        )}
+                      </div>
+                      <p className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 sm:w-full sm:text-xs">
+                        {text.endLetter}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                </LayoutGroup>
 
                 {aiState.phase === 'round_end' && (
                   <div className="mt-4 flex justify-center">
@@ -2896,45 +3026,48 @@ export default function App() {
               )}
             </div>
 
-            <div
-              className="relative mt-5 grid grid-cols-[80px_minmax(0,1fr)_80px] items-start gap-2 sm:gap-3 md:grid-cols-[112px_minmax(260px,1fr)_112px]"
-              style={{ perspective: 1400 }}
-            >
-              <div
-                ref={leftLetterSlotRef}
-                className="relative mx-auto h-28 w-20 md:h-36 md:w-28"
-              >
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
-                  <motion.div
-                    className={`letter-tile ${isDesktop ? '' : 'compact'}`}
-                    animate={{
-                      x: roomState.swapped ? swapDistance : 0,
-                      rotateY: 0
-                    }}
-                    transition={{
-                      x: { type: 'spring', stiffness: 220, damping: 18 },
-                      rotateY: { duration: 0.42 }
-                    }}
-                  >
-                    {roomState.letters[1] || '?'}
-                  </motion.div>
+            <LayoutGroup id="room-letter-swap">
+              <div className="relative mt-5 grid grid-cols-[80px_minmax(0,1fr)_80px] items-start gap-2 sm:gap-3 md:grid-cols-[112px_minmax(260px,1fr)_112px]">
+                <div className="relative mx-auto h-28 w-20 md:h-36 md:w-28">
+                  <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
+                    {!roomState.swapped ? (
+                      <motion.div
+                        layoutId="room-letter-1"
+                        className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                        animate={roomSwapTileAnimate}
+                        transition={{
+                          layout: { type: 'spring', stiffness: 250, damping: 22 },
+                          duration: 0.42,
+                          ease: 'easeOut'
+                        }}
+                      >
+                        {roomState.letters[1] || '?'}
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        layoutId="room-letter-2"
+                        className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                        animate={roomSwapTileAnimate}
+                        transition={{
+                          layout: { type: 'spring', stiffness: 250, damping: 22 },
+                          duration: 0.42,
+                          ease: 'easeOut'
+                        }}
+                      >
+                        {roomState.letters[2] || '?'}
+                      </motion.div>
+                    )}
+                  </div>
+                  <div className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 md:w-28 md:text-xs md:tracking-[0.2em]">
+                    {text.startLetter}
+                  </div>
                 </div>
-                <div className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 md:w-28 md:text-xs md:tracking-[0.2em]">
-                  {text.startLetter}
-                </div>
-              </div>
 
-              <div className="relative w-full">
+                <div className="relative w-full">
                 <form onSubmit={submitWord} className="relative">
                   <motion.div
                     className="relative"
-                    animate={
-                      feedback === 'error'
-                        ? { x: [0, -10, 9, -8, 6, -4, 2, 0] }
-                        : feedback === 'success'
-                        ? { scale: [1, 1.02, 1] }
-                        : { x: 0, scale: 1 }
-                    }
+                    animate={wordInputAnimate}
                     transition={{ duration: 0.45 }}
                   >
                     <input
@@ -3034,32 +3167,44 @@ export default function App() {
                     </button>
                   </div>
                 </form>
-              </div>
+                </div>
 
-              <div
-                ref={rightLetterSlotRef}
-                className="relative mx-auto h-28 w-20 md:h-36 md:w-28"
-              >
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
-                  <motion.div
-                    className={`letter-tile ${isDesktop ? '' : 'compact'}`}
-                    animate={{
-                      x: roomState.swapped ? -swapDistance : 0,
-                      rotateY: 0
-                    }}
-                    transition={{
-                      x: { type: 'spring', stiffness: 220, damping: 18 },
-                      rotateY: { duration: 0.42 }
-                    }}
-                  >
-                    {roomState.letters[2] || '?'}
-                  </motion.div>
-                </div>
-                <div className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 md:w-28 md:text-xs md:tracking-[0.2em]">
-                  {text.endLetter}
+                <div className="relative mx-auto h-28 w-20 md:h-36 md:w-28">
+                  <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2">
+                    {roomState.swapped ? (
+                      <motion.div
+                        layoutId="room-letter-1"
+                        className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                        animate={roomSwapTileAnimate}
+                        transition={{
+                          layout: { type: 'spring', stiffness: 250, damping: 22 },
+                          duration: 0.42,
+                          ease: 'easeOut'
+                        }}
+                      >
+                        {roomState.letters[1] || '?'}
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        layoutId="room-letter-2"
+                        className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                        animate={roomSwapTileAnimate}
+                        transition={{
+                          layout: { type: 'spring', stiffness: 250, damping: 22 },
+                          duration: 0.42,
+                          ease: 'easeOut'
+                        }}
+                      >
+                        {roomState.letters[2] || '?'}
+                      </motion.div>
+                    )}
+                  </div>
+                  <div className="absolute bottom-0 left-0 w-20 text-center text-[10px] tracking-[0.15em] text-slate-400 md:w-28 md:text-xs md:tracking-[0.2em]">
+                    {text.endLetter}
+                  </div>
                 </div>
               </div>
-            </div>
+            </LayoutGroup>
 
             <div className="mt-6 xl:hidden">
               <div className="flex items-center justify-between">
