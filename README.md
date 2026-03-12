@@ -57,6 +57,30 @@ docker compose logs -f
 docker compose down
 ```
 
+## GitHub 自动打包镜像（GHCR）
+
+仓库已内置 GitHub Actions 工作流：
+
+- 文件：`.github/workflows/docker-publish.yml`
+- 触发：`push main`、`v* tag`、`workflow_dispatch`
+- PR：仅构建检查，不推送
+- 主分支/标签：自动构建并推送多架构镜像（`amd64` + `arm64`）到 GHCR
+
+镜像地址规则：
+
+- `ghcr.io/<你的GitHub用户名小写>/word-clash:latest`
+- 例如本仓库：`ghcr.io/xiabixiang/word-clash:latest`
+
+首次启用建议：
+
+1. 仓库 `Settings -> Actions -> General` 确保允许工作流运行。
+2. 首次推送后到 `Packages` 页面，将镜像可见性改为 `Public`（如果你希望任何人可拉取）。
+3. 服务器拉取命令示例：
+
+```bash
+docker pull ghcr.io/xiabixiang/word-clash:latest
+```
+
 ### 1Panel 部署建议
 
 1. 在 1Panel 新建应用，导入本项目目录中的 `docker-compose.yml`。
@@ -70,3 +94,7 @@ docker compose down
 2. 玩家 B 打开同一地址，输入房间码并“加入房间”。
 3. 双方各自在自己端输入盲填字母（输入过程仅显示 `•`），点击 Ready。
 4. 系统倒计时后进入对战阶段，双方可实时同步输入单词并抢分。
+
+## License
+
+本项目使用 [MIT License](./LICENSE)，可自由商用、修改与分发。
