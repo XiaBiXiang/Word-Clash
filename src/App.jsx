@@ -35,6 +35,7 @@ const I18N = {
     title: '首尾对决',
     subtitle: 'Word Clash · 实时联机版',
     languageTag: 'EN',
+    languageLabel: '语言',
     themeNeon: '霓虹',
     themeCream: '白棕',
     player: '玩家',
@@ -174,6 +175,7 @@ const I18N = {
     title: 'Word Clash',
     subtitle: '首尾对决 · Realtime Online',
     languageTag: '中',
+    languageLabel: 'Language',
     themeNeon: 'Neon',
     themeCream: 'Cream',
     player: 'Player',
@@ -308,8 +310,154 @@ const I18N = {
     },
     scorePoint: '{name} scores',
     fight: 'FIGHT'
+  },
+  ja: {
+    title: 'ワードクラッシュ',
+    subtitle: '首尾対決 · リアルタイム対戦',
+    languageTag: '中',
+    languageLabel: '言語',
+    themeNeon: 'ネオン',
+    themeCream: 'クリーム',
+    player: 'プレイヤー',
+    score: '得点',
+    roomCode: 'ルームコード',
+    createRoom: 'ルーム作成',
+    joinRoom: '参加',
+    spectateRoom: '観戦参加',
+    copy: 'コピー',
+    leaveHint: 'ルームコードを相手に共有してオンライン対戦できます。',
+    roomInput: '6桁のルームコードを入力',
+    accountLabel: 'プレイヤータグ',
+    accountHint: 'ログイン不要。識別用の表示名です。',
+    accountPlaceholder: '例：NightFox',
+    hiddenLetter: '隠し文字',
+    hiddenHint: '入力中は常に • 表示で文字は見えません',
+    ready: 'Ready',
+    edit: '編集',
+    submit: '送信',
+    swap: '先頭/末尾を交換',
+    roundTimer: 'ラウンドタイマー',
+    nextRound: '次のラウンド',
+    resetMatch: '試合リセット',
+    backToLobby: 'ロビーへ戻る',
+    moreActions: 'その他',
+    actionsPanel: 'ルーム操作',
+    leaveConfirmTitle: 'このルームを退出しますか？',
+    leaveConfirmDesc: '退出するとロビーに戻り、現在の席は解放されます。',
+    leaveConfirmAction: '退出する',
+    cancel: 'キャンセル',
+    inputPlaceholder: '英単語を入力...',
+    setupTitle: '準備フェーズ',
+    battleTitle: '対戦フェーズ',
+    showHistory: 'ログ表示',
+    hideHistory: 'ログ非表示',
+    startLetter: '先頭',
+    endLetter: '末尾',
+    historyTitle: '対戦ログ',
+    waitingHistory: 'まだ記録がありません',
+    historySubmitted: '解答を送信',
+    chatTitle: 'ライブチャット',
+    showChat: 'チャット表示',
+    hideChat: 'チャット非表示',
+    chatPlaceholder: 'メッセージ入力...',
+    send: '送信',
+    chatEmpty: 'メッセージはありません',
+    systemTimeline: 'システム通知',
+    showSystem: '通知表示',
+    hideSystem: '通知非表示',
+    emptySystem: 'システム通知はありません',
+    you: 'あなた',
+    opponent: '相手',
+    spectator: '観戦',
+    spectatorMode: '観戦モード',
+    spectatorHint: '現在は観戦者です。チャットは可能ですが、Ready/交換/送信はできません。',
+    spectatorCount: '観戦人数',
+    hostTag: 'ホスト',
+    lockedTag: 'ロック中',
+    voted: '投票済み',
+    selfInputOnly: '相手のみ入力可能',
+    lockRoom: 'ルームをロック',
+    unlockRoom: 'ロック解除',
+    kickOpponent: '相手を退出',
+    transferHost: 'ホスト移譲',
+    confirmKick: '相手をルームから退出させますか？',
+    confirmTransfer: 'ホスト権限を相手に移譲しますか？',
+    hostActionConfirmTitle: 'このホスト操作を実行しますか？',
+    hostActionConfirmDo: '実行する',
+    connection: {
+      connected: '接続済み',
+      disconnected: '切断',
+      connecting: '接続中'
+    },
+    status: {
+      lobbyHint: '先にルームを作成または参加してください。',
+      waitingOpponent: '{name} がルームを作成しました。参加者を待機中。',
+      roomCreated: '{name} がルームを作成しました。',
+      waitingReady: '{name} が参加しました。双方が文字を入力して Ready を押してください。',
+      playerJoined: '{name} がルームに参加しました。',
+      bothReady: '両者準備完了。カウントダウン開始。',
+      battleReady: '文字公開。スペル対決開始。',
+      reconnecting: '接続が不安定です。ルーム再接続を試行中...',
+      playerReconnecting: '{name} が切断されました。再接続待機中...',
+      playerRejoined: '{name} が再接続しました。',
+      spectatorJoined: '{name} が観戦を開始しました。',
+      spectatorLeft: '{name} が観戦を終了しました。',
+      playerLocked: '{name} が文字をロックしました。',
+      playerEditing: '{name} がロック解除し再入力中です。',
+      swapPending: '{name} が交換投票を開始しました（{progress}/{total}）。',
+      swapVoteCanceled: '{name} が交換投票を取り消しました（{progress}/{total}）。',
+      lettersSwapped: '両者が承認し、文字を交換しました。',
+      roomLockedByHost: '{name} がルームをロックしました。新規参加不可。',
+      roomUnlockedByHost: '{name} がルームロックを解除しました。',
+      playerKicked: 'ホストが {name} をルームから退出させました。',
+      hostTransferred: 'ホスト権限が {name} に移譲されました。',
+      roundTimeout: '時間切れ。このラウンドは引き分け終了。',
+      roundReset: '{name} が次のラウンドを開始しました。',
+      matchReset: '{name} が試合全体をリセットしました。',
+      opponentLeft: '{name} がルームを退出し、ラウンドはリセットされました。',
+      successHit: '{name} が得点: {word}',
+      invalidLength: '単語は4文字以上である必要があります。',
+      onlyLetters: '英字（A-Z）のみ入力できます。',
+      startMismatch: '単語は {letter} で始まる必要があります。',
+      endMismatch: '単語は {letter} で終わる必要があります。',
+      blockedWord: '略語/人名/固有名詞と判定されたため使用できません。',
+      nonCommonWord: '辞書で有効な一般語義が見つかりませんでした。',
+      dictUnavailable: '辞書APIが利用不可で、ローカル語彙にも一致しませんでした。',
+      unknownInvalid: 'この単語はルールを満たしていません。',
+      roomNotFound: 'ルームが見つかりません。コードを確認してください。',
+      roomFull: 'ルームが満員です。新しいルームを作成してください。',
+      roomLocked: 'ルームはロックされており、現在参加できません。',
+      notHost: 'この操作はホストのみ可能です。',
+      cannotKickSelf: '自分自身を退出させることはできません。',
+      targetNotFound: '対象プレイヤーが見つからないかオフラインです。',
+      kickedByHost: 'ホスト {hostName} によりルームから退出されました。',
+      invalidLetter: '有効な英字1文字を入力してください。'
+    },
+    toast: {
+      createdRoom: 'ルーム {roomCode} を作成しました。',
+      joinedRoom: 'ルーム {roomCode} に参加しました。',
+      copiedRoomCode: 'ルームコードをコピーしました。',
+      copyFailed: 'コピーに失敗しました。手動でコピーしてください。',
+      readyLocked: '文字をロックしました。',
+      readyUnlocked: '文字ロックを解除しました。',
+      swapSent: '交換投票を送信しました。',
+      swapCanceled: '交換投票を取り消しました。',
+      rejoinedRoom: 'ルーム {roomCode} に自動再接続しました。',
+      rejoinFailed: '再接続に失敗しました。再参加してください。',
+      leaveConfirm: '現在のルームから退出するか確認してください。',
+      leftRoom: 'ルームを退出してロビーに戻りました。',
+      identitySaved: 'プレイヤータグを保存しました。'
+    },
+    scorePoint: '{name} が得点',
+    fight: 'FIGHT'
   }
 };
+
+const LANGUAGE_OPTIONS = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' }
+];
 
 const STATUS_COLOR = {
   info: 'text-cyan-100 border-cyan-300/45 bg-cyan-500/10',
@@ -1416,13 +1564,20 @@ export default function App() {
             >
               {text.connection[socketState]}
             </span>
-            <button
-              type="button"
-              className="neo-btn rounded-xl border border-cyan-200/40 bg-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
-              onClick={() => setLang((prev) => (prev === 'zh' ? 'en' : 'zh'))}
-            >
-              {text.languageTag}
-            </button>
+            <label className="flex items-center gap-2 rounded-xl border border-cyan-200/40 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-100">
+              <span className="font-semibold">{text.languageLabel}</span>
+              <select
+                value={lang}
+                onChange={(event) => setLang(event.target.value)}
+                className="neon-input rounded-lg px-2 py-1 text-xs font-semibold"
+              >
+                {LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               className="neo-btn rounded-xl border border-amber-300/45 bg-amber-500/18 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
