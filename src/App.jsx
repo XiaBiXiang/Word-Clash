@@ -1,16 +1,19 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { validateEnglishWord } from './utils/wordValidation.js';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
 const IDENTITY_STORAGE_KEY = 'word-clash-identity';
 const CLIENT_ID_STORAGE_KEY = 'word-clash-client-id';
 const THEME_STORAGE_KEY = 'word-clash-theme';
 const LANG_STORAGE_KEY = 'word-clash-lang';
+const AI_ROUND_SECONDS = 24;
 
 const EMPTY_ROOM_STATE = {
   roomCode: '',
   phase: 'setup',
+  roundId: 0,
   countdown: null,
   swapped: false,
   swapVotes: { 1: false, 2: false },
@@ -31,6 +34,18 @@ const EMPTY_ROOM_STATE = {
   status: { type: 'info', key: 'waitingOpponent' }
 };
 
+const EMPTY_AI_STATE = {
+  phase: 'setup',
+  countdown: null,
+  swapped: false,
+  letters: { 1: '', 2: '' },
+  battleSecondsLeft: null,
+  roundDurationSec: AI_ROUND_SECONDS,
+  score: 0,
+  round: 1,
+  status: { type: 'info', key: 'aiSetupHint' }
+};
+
 const I18N = {
   zh: {
     title: '首尾对决',
@@ -45,6 +60,15 @@ const I18N = {
     createRoom: '创建房间',
     joinRoom: '加入房间',
     spectateRoom: '加入观战',
+    aiMode: '人机对战',
+    aiModeTitle: '人机挑战',
+    aiModeDesc: '你输入一个字母，AI 会随机生成另一个字母，本回合限时更短。',
+    aiOpponent: 'AI 对手',
+    aiStartRound: '开始回合',
+    aiNextRound: '下一回合',
+    aiReset: '重置人机',
+    aiExit: '返回大厅',
+    aiRound: '回合',
     copy: '复制',
     leaveHint: '将房间码发给另一位玩家后即可联机。',
     roomInput: '输入 6 位房间码',
@@ -67,6 +91,27 @@ const I18N = {
     leaveConfirmDesc: '离开后会返回搜房界面，并释放当前玩家席位。',
     leaveConfirmAction: '确认离开',
     cancel: '取消',
+    rulesButton: '游戏规则',
+    rulesTitle: '新手操作说明',
+    rulesIntroTitle: '快速上手',
+    rulesIntro1: '先设置账户标识，再创建房间或输入房间码加入房间。',
+    rulesIntro2: '每局最多两名玩家对战，其他人可观战并实时聊天。',
+    rulesFlowTitle: '回合流程',
+    rulesFlow1: '准备阶段：双方各盲填 1 个英文字母并点击 Ready。',
+    rulesFlow2: '双方都 Ready 后触发 3-2-1 倒计时并揭晓字母。',
+    rulesFlow3: '对战阶段：在中间输入单词，也可以发起交换首尾投票。',
+    rulesFlow4: '交换规则：必须两位玩家都投票（2/2）后才会真正交换。',
+    rulesFlow5: '任意玩家命中有效单词后，本回合立即结束并结算得分。',
+    rulesJudgeTitle: '判定规则',
+    rulesJudge1: '单词必须以当前左侧字母开头、右侧字母结尾。',
+    rulesJudge2: '单词总长度至少为 4（中间至少 2 个字母）。',
+    rulesJudge3: '仅允许英文字母 A-Z，不允许缩写/人名/专有名词。',
+    rulesJudge4: '系统会做词典合法性校验，不合法会提示原因。',
+    rulesTipsTitle: '实用提示',
+    rulesTip1: '进入房间后，任何阶段都可以发送聊天消息。',
+    rulesTip2: '房主可执行锁房、移除对手、转移房主等管理操作。',
+    rulesTip3: '若网络波动会自动重连；频繁点击会触发限流保护。',
+    rulesClose: '我知道了',
     inputPlaceholder: '输入英文单词...',
     setupTitle: '准备阶段',
     battleTitle: '对战阶段',
@@ -119,6 +164,9 @@ const I18N = {
       bothReady: '双方就位，倒计时开始。',
       battleReady: '字母揭晓，开始拼写。',
       reconnecting: '网络波动，正在尝试自动重连房间...',
+      aiSetupHint: '请输入你的字母并点击“开始回合”，AI 会随机生成对手字母。',
+      aiCountdownStart: '人机双方就位，倒计时开始。',
+      aiRoundReset: '已进入下一回合，请重新输入你的字母。',
       playerReconnecting: '{name} 掉线，等待重连中...',
       playerRejoined: '{name} 已重新连接。',
       spectatorJoined: '{name} 进入了观战。',
@@ -186,6 +234,15 @@ const I18N = {
     createRoom: 'Create Room',
     joinRoom: 'Join Room',
     spectateRoom: 'Spectate',
+    aiMode: 'Play VS AI',
+    aiModeTitle: 'AI Challenge',
+    aiModeDesc: 'You choose one letter, AI generates the other. The round timer is shorter.',
+    aiOpponent: 'AI Opponent',
+    aiStartRound: 'Start Round',
+    aiNextRound: 'Next Round',
+    aiReset: 'Reset AI',
+    aiExit: 'Back To Lobby',
+    aiRound: 'Round',
     copy: 'Copy',
     leaveHint: 'Share this room code with your opponent to play online.',
     roomInput: 'Enter 6-char room code',
@@ -208,6 +265,27 @@ const I18N = {
     leaveConfirmDesc: 'You will return to lobby search and release your player slot.',
     leaveConfirmAction: 'Leave Room',
     cancel: 'Cancel',
+    rulesButton: 'How To Play',
+    rulesTitle: 'Quick Rules Guide',
+    rulesIntroTitle: 'Getting Started',
+    rulesIntro1: 'Set your player tag, then create a room or join with a room code.',
+    rulesIntro2: 'Two players battle in one room. Others can join as spectators and chat.',
+    rulesFlowTitle: 'Round Flow',
+    rulesFlow1: 'Setup: each player enters one hidden letter and presses Ready.',
+    rulesFlow2: 'When both are ready, a 3-2-1 countdown starts and letters are revealed.',
+    rulesFlow3: 'Battle: type a word in the center, or vote to swap start/end letters.',
+    rulesFlow4: 'Swap rule: letters swap only when both players vote (2/2).',
+    rulesFlow5: 'Once a player submits a valid word, the round ends immediately.',
+    rulesJudgeTitle: 'Validation Rules',
+    rulesJudge1: 'Word must start with the current left letter and end with the right letter.',
+    rulesJudge2: 'Word length must be at least 4 letters.',
+    rulesJudge3: 'Only A-Z letters are allowed. Acronyms/names/proper nouns are blocked.',
+    rulesJudge4: 'The system checks dictionary validity and gives failure reasons.',
+    rulesTipsTitle: 'Tips',
+    rulesTip1: 'Chat is available at any stage after entering a room.',
+    rulesTip2: 'Host can lock room, kick opponent, and transfer host permission.',
+    rulesTip3: 'Auto-reconnect handles brief network drops. Spam clicks trigger rate limits.',
+    rulesClose: 'Got It',
     inputPlaceholder: 'Type an English word...',
     setupTitle: 'Preparation',
     battleTitle: 'Battle',
@@ -260,6 +338,9 @@ const I18N = {
       bothReady: 'Both players ready. Countdown started.',
       battleReady: 'Letters revealed. Start spelling.',
       reconnecting: 'Connection unstable. Trying to rejoin room...',
+      aiSetupHint: 'Enter your letter and press "Start Round". AI will generate the other letter.',
+      aiCountdownStart: 'Both sides ready. Countdown started.',
+      aiRoundReset: 'Next round started. Enter your letter again.',
       playerReconnecting: '{name} disconnected. Waiting for reconnection...',
       playerRejoined: '{name} reconnected.',
       spectatorJoined: '{name} started spectating.',
@@ -327,6 +408,15 @@ const I18N = {
     createRoom: 'ルーム作成',
     joinRoom: '参加',
     spectateRoom: '観戦参加',
+    aiMode: 'AI対戦',
+    aiModeTitle: 'AIチャレンジ',
+    aiModeDesc: 'あなたが1文字入力し、AIがもう1文字をランダム生成します。制限時間は短めです。',
+    aiOpponent: 'AI相手',
+    aiStartRound: 'ラウンド開始',
+    aiNextRound: '次のラウンド',
+    aiReset: 'AIリセット',
+    aiExit: 'ロビーへ戻る',
+    aiRound: 'ラウンド',
     copy: 'コピー',
     leaveHint: 'ルームコードを相手に共有してオンライン対戦できます。',
     roomInput: '6桁のルームコードを入力',
@@ -349,6 +439,27 @@ const I18N = {
     leaveConfirmDesc: '退出するとロビーに戻り、現在の席は解放されます。',
     leaveConfirmAction: '退出する',
     cancel: 'キャンセル',
+    rulesButton: 'ルール',
+    rulesTitle: '遊び方ガイド',
+    rulesIntroTitle: 'はじめに',
+    rulesIntro1: 'プレイヤータグを設定し、ルーム作成またはコード参加を行います。',
+    rulesIntro2: '1ルームは2人対戦。その他のユーザーは観戦とチャットが可能です。',
+    rulesFlowTitle: 'ラウンド進行',
+    rulesFlow1: '準備: 各プレイヤーが隠し文字を1つ入力して Ready を押します。',
+    rulesFlow2: '両者 Ready で 3-2-1 カウントダウン後に文字が公開されます。',
+    rulesFlow3: '対戦: 中央に単語を入力し、先頭/末尾交換の投票も可能です。',
+    rulesFlow4: '交換条件: 2人とも投票（2/2）したときのみ交換が成立します。',
+    rulesFlow5: '有効な単語を誰かが送信すると、そのラウンドは即終了します。',
+    rulesJudgeTitle: '判定ルール',
+    rulesJudge1: '単語は左側の文字で始まり、右側の文字で終わる必要があります。',
+    rulesJudge2: '単語長は4文字以上である必要があります。',
+    rulesJudge3: 'A-Z の英字のみ。略語/人名/固有名詞は不可です。',
+    rulesJudge4: '辞書照合で有効性を検証し、失敗時は理由を表示します。',
+    rulesTipsTitle: 'ヒント',
+    rulesTip1: 'ルーム入室後は、どのフェーズでもチャット送信できます。',
+    rulesTip2: 'ホストはルームロック、相手退出、ホスト移譲を行えます。',
+    rulesTip3: '短時間の切断は自動再接続され、連打はレート制限されます。',
+    rulesClose: '確認しました',
     inputPlaceholder: '英単語を入力...',
     setupTitle: '準備フェーズ',
     battleTitle: '対戦フェーズ',
@@ -401,6 +512,9 @@ const I18N = {
       bothReady: '両者準備完了。カウントダウン開始。',
       battleReady: '文字公開。スペル対決開始。',
       reconnecting: '接続が不安定です。ルーム再接続を試行中...',
+      aiSetupHint: 'あなたの文字を入力して「ラウンド開始」を押すと、AIの文字が生成されます。',
+      aiCountdownStart: '人とAIの準備完了。カウントダウン開始。',
+      aiRoundReset: '次ラウンドに進みました。もう一度文字を入力してください。',
       playerReconnecting: '{name} が切断されました。再接続待機中...',
       playerRejoined: '{name} が再接続しました。',
       spectatorJoined: '{name} が観戦を開始しました。',
@@ -553,6 +667,33 @@ function defaultIdentity() {
 function createClientId() {
   const entropy = Math.random().toString(36).slice(2, 10);
   return `wc-${Date.now().toString(36)}-${entropy}`;
+}
+
+function randomEnglishLetter() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  return chars[Math.floor(Math.random() * chars.length)];
+}
+
+function sanitizeSingleLetter(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '')
+    .slice(-1);
+}
+
+function resolveValidationReason(reason) {
+  switch (reason) {
+    case 'only_letters':
+      return 'onlyLetters';
+    case 'blocked_word':
+      return 'blockedWord';
+    case 'non_common_word':
+      return 'nonCommonWord';
+    case 'dictionary_unreachable':
+      return 'dictUnavailable';
+    default:
+      return 'unknownInvalid';
+  }
 }
 
 function getToastText(toast, text) {
@@ -796,6 +937,11 @@ export default function App() {
   });
   const [socketState, setSocketState] = useState('connecting');
   const [roomState, setRoomState] = useState(EMPTY_ROOM_STATE);
+  const [inAiMode, setInAiMode] = useState(false);
+  const [aiState, setAiState] = useState(EMPTY_AI_STATE);
+  const [aiLocalLetter, setAiLocalLetter] = useState('');
+  const [aiWord, setAiWord] = useState('');
+  const [aiFeedback, setAiFeedback] = useState(null);
   const [clientId] = useState(() => {
     if (typeof window === 'undefined') {
       return createClientId();
@@ -831,6 +977,7 @@ export default function App() {
   const [burstSeed, setBurstSeed] = useState(1);
   const [busy, setBusy] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
   const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [showMobileSystem, setShowMobileSystem] = useState(false);
@@ -842,6 +989,9 @@ export default function App() {
   const [swapPulseTick, setSwapPulseTick] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [toasts, setToasts] = useState([]);
+  const [roomUiReady, setRoomUiReady] = useState(false);
+  const [isPerformanceMode, setIsPerformanceMode] = useState(false);
+  const [localBattleSecondsLeft, setLocalBattleSecondsLeft] = useState(null);
   const [isDesktop, setIsDesktop] = useState(
     typeof window === 'undefined' ? true : window.innerWidth >= 768
   );
@@ -859,6 +1009,8 @@ export default function App() {
   const previousSystemCountRef = useRef(0);
   const chatUnreadSeededRef = useRef(false);
   const systemUnreadSeededRef = useRef(false);
+  const aiCountdownIntervalRef = useRef(null);
+  const aiBattleStartTimeoutRef = useRef(null);
   const roomCodeRef = useRef('');
   const roomRoleRef = useRef(null);
   const playerIdRef = useRef(null);
@@ -881,6 +1033,28 @@ export default function App() {
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((item) => item.id !== id));
     }, 2200);
+  }
+
+  function clearAiSetupTimers() {
+    if (aiCountdownIntervalRef.current) {
+      window.clearInterval(aiCountdownIntervalRef.current);
+      aiCountdownIntervalRef.current = null;
+    }
+    if (aiBattleStartTimeoutRef.current) {
+      window.clearTimeout(aiBattleStartTimeoutRef.current);
+      aiBattleStartTimeoutRef.current = null;
+    }
+  }
+
+  function resetAiState(keepScore = false) {
+    setAiState((prev) => ({
+      ...EMPTY_AI_STATE,
+      score: keepScore ? prev.score : 0,
+      round: keepScore ? prev.round : 1
+    }));
+    setAiLocalLetter('');
+    setAiWord('');
+    setAiFeedback(null);
   }
 
   useEffect(() => {
@@ -1038,12 +1212,55 @@ export default function App() {
   }, [identity]);
 
   useEffect(() => {
+    return () => {
+      clearAiSetupTimers();
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     document.body.setAttribute('data-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePerformanceMode = () => {
+      const cores = Number(window.navigator?.hardwareConcurrency || 8);
+      const narrowViewport = window.innerWidth <= 900;
+      setIsPerformanceMode(media.matches || (narrowViewport && cores <= 4));
+    };
+
+    updatePerformanceMode();
+    window.addEventListener('resize', updatePerformanceMode);
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', updatePerformanceMode);
+    } else if (typeof media.addListener === 'function') {
+      media.addListener(updatePerformanceMode);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updatePerformanceMode);
+      if (typeof media.removeEventListener === 'function') {
+        media.removeEventListener('change', updatePerformanceMode);
+      } else if (typeof media.removeListener === 'function') {
+        media.removeListener(updatePerformanceMode);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.body.setAttribute('data-performance', isPerformanceMode ? 'lite' : 'full');
+  }, [isPerformanceMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1087,6 +1304,27 @@ export default function App() {
 
   useEffect(() => {
     if (!roomCode) {
+      setRoomUiReady(false);
+      return undefined;
+    }
+
+    if (typeof window === 'undefined') {
+      setRoomUiReady(true);
+      return undefined;
+    }
+
+    setRoomUiReady(false);
+    const rafId = window.requestAnimationFrame(() => {
+      setRoomUiReady(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [roomCode]);
+
+  useEffect(() => {
+    if (!roomCode || !roomUiReady) {
       return undefined;
     }
 
@@ -1127,7 +1365,7 @@ export default function App() {
         observer.disconnect();
       }
     };
-  }, [isCompactPhone, isDesktop, roomCode, roomState.phase, showCompactActions, showMobileHistory]);
+  }, [isCompactPhone, isDesktop, roomCode, roomState.phase, roomUiReady, showCompactActions, showMobileHistory]);
 
   useEffect(() => {
     if (!roomState.status?.type) {
@@ -1178,6 +1416,16 @@ export default function App() {
   }, [feedback]);
 
   useEffect(() => {
+    if (!aiFeedback) {
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setAiFeedback(null);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [aiFeedback]);
+
+  useEffect(() => {
     if (!scoreFlash) {
       return undefined;
     }
@@ -1188,7 +1436,7 @@ export default function App() {
   }, [scoreFlash]);
 
   useEffect(() => {
-    if (!showLeaveConfirm && !pendingHostAction) {
+    if (!showLeaveConfirm && !pendingHostAction && !showRulesModal) {
       return undefined;
     }
 
@@ -1196,12 +1444,13 @@ export default function App() {
       if (event.key === 'Escape') {
         setShowLeaveConfirm(false);
         setPendingHostAction(null);
+        setShowRulesModal(false);
       }
     }
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pendingHostAction, showLeaveConfirm]);
+  }, [pendingHostAction, showLeaveConfirm, showRulesModal]);
 
   useEffect(() => {
     if (isDesktop && showCompactActions) {
@@ -1299,9 +1548,67 @@ export default function App() {
     node.scrollTop = node.scrollHeight;
   }, [chatEntries.length, isDesktop, showMobileChat]);
 
+  useEffect(() => {
+    if (roomState.phase !== 'battle') {
+      setLocalBattleSecondsLeft(null);
+      return;
+    }
+    const initial = Number(roomState.battleSecondsLeft);
+    if (Number.isFinite(initial)) {
+      setLocalBattleSecondsLeft(initial);
+    }
+  }, [roomState.battleSecondsLeft, roomState.phase, roomState.roundId]);
+
+  useEffect(() => {
+    if (roomState.phase !== 'battle') {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setLocalBattleSecondsLeft((prev) => {
+        if (prev === null || prev <= 0) {
+          return prev;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [roomState.phase, roomState.roundId]);
+
+  useEffect(() => {
+    if (!inAiMode || aiState.phase !== 'battle') {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setAiState((prev) => {
+        if (prev.phase !== 'battle') {
+          return prev;
+        }
+        const next = Math.max(0, Number(prev.battleSecondsLeft || 0) - 1);
+        if (next <= 0) {
+          return {
+            ...prev,
+            phase: 'round_end',
+            battleSecondsLeft: 0,
+            status: {
+              type: 'info',
+              key: 'roundTimeout',
+              params: { seconds: prev.roundDurationSec }
+            }
+          };
+        }
+        return {
+          ...prev,
+          battleSecondsLeft: next
+        };
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [aiState.phase, aiState.round, inAiMode]);
+
   const inRoom = Boolean(roomCode);
+  const showLobby = !inRoom && !inAiMode;
   const isSpectator = roomRole === 'spectator';
-  const activeStatus = inRoom ? roomState.status : lobbyStatus;
+  const activeStatus = inRoom ? roomState.status : inAiMode ? aiState.status : lobbyStatus;
   const statusClass = STATUS_COLOR[activeStatus?.type] || STATUS_COLOR.info;
   const useCompactActions = !isDesktop;
   const showMobileBattleBar = Boolean(playerId && roomRole === 'player' && !isDesktop && roomState.phase === 'battle');
@@ -1316,20 +1623,252 @@ export default function App() {
   const swapProgress = Number(swapVotes[1]) + Number(swapVotes[2]);
   const mySwapVoted = Boolean(playerId && swapVotes[playerId]);
   const roundDurationSec = Number(roomState.roundDurationSec || EMPTY_ROOM_STATE.roundDurationSec || 40);
-  const battleSecondsLeft =
-    roomState.battleSecondsLeft === null || roomState.battleSecondsLeft === undefined
+  const battleSecondsLeft = roomState.phase === 'battle'
+    ? localBattleSecondsLeft
+    : roomState.battleSecondsLeft === null || roomState.battleSecondsLeft === undefined
       ? null
       : Number(roomState.battleSecondsLeft);
   const timerProgress =
     battleSecondsLeft === null
       ? 0
       : Math.max(0, Math.min(1, battleSecondsLeft / Math.max(1, roundDurationSec)));
+  const aiBattleSecondsLeft =
+    aiState.battleSecondsLeft === null || aiState.battleSecondsLeft === undefined
+      ? null
+      : Number(aiState.battleSecondsLeft);
+  const aiTimerProgress =
+    aiBattleSecondsLeft === null
+      ? 0
+      : Math.max(0, Math.min(1, aiBattleSecondsLeft / Math.max(1, Number(aiState.roundDurationSec || AI_ROUND_SECONDS))));
+  const overlayCountdown =
+    roomState.phase === 'countdown' && roomState.countdown !== null
+      ? roomState.countdown
+      : inAiMode && aiState.phase === 'countdown' && aiState.countdown !== null
+      ? aiState.countdown
+      : null;
 
   function applyActionError(errorKey) {
     setRoomState((prev) => ({
       ...prev,
       status: { type: 'error', key: errorKey || 'unknownInvalid' }
     }));
+  }
+
+  function openAiMode() {
+    clearAiSetupTimers();
+    setInAiMode(true);
+    resetAiState(false);
+    setLobbyStatus({ type: 'info', key: 'aiSetupHint' });
+  }
+
+  function exitAiMode() {
+    clearAiSetupTimers();
+    setInAiMode(false);
+    resetAiState(false);
+    setLobbyStatus({ type: 'info', key: 'lobbyHint' });
+  }
+
+  function startAiRound() {
+    if (!inAiMode || aiState.phase !== 'setup') {
+      return;
+    }
+
+    const playerLetter = sanitizeSingleLetter(aiLocalLetter);
+    if (!playerLetter) {
+      setAiState((prev) => ({
+        ...prev,
+        status: { type: 'error', key: 'invalidLetter' }
+      }));
+      setAiFeedback('error');
+      return;
+    }
+
+    clearAiSetupTimers();
+    const botLetter = randomEnglishLetter();
+    setAiWord('');
+    setAiFeedback(null);
+    setAiState((prev) => ({
+      ...prev,
+      phase: 'countdown',
+      countdown: 3,
+      swapped: false,
+      letters: { 1: playerLetter, 2: botLetter },
+      battleSecondsLeft: null,
+      roundDurationSec: AI_ROUND_SECONDS,
+      status: { type: 'info', key: 'aiCountdownStart' }
+    }));
+
+    let countdown = 3;
+    aiCountdownIntervalRef.current = window.setInterval(() => {
+      countdown -= 1;
+      setAiState((prev) => {
+        if (prev.phase !== 'countdown') {
+          return prev;
+        }
+        return {
+          ...prev,
+          countdown
+        };
+      });
+
+      if (countdown > 0) {
+        return;
+      }
+
+      clearAiSetupTimers();
+      aiBattleStartTimeoutRef.current = window.setTimeout(() => {
+        setAiState((prev) => {
+          if (prev.phase !== 'countdown') {
+            return prev;
+          }
+          return {
+            ...prev,
+            phase: 'battle',
+            countdown: null,
+            battleSecondsLeft: AI_ROUND_SECONDS,
+            status: { type: 'info', key: 'battleReady' }
+          };
+        });
+      }, 420);
+    }, 1000);
+  }
+
+  function swapAiLetters() {
+    if (!inAiMode || aiState.phase !== 'battle') {
+      return;
+    }
+    setAiState((prev) => ({
+      ...prev,
+      swapped: !prev.swapped,
+      status: { type: 'info', key: 'lettersSwapped' }
+    }));
+  }
+
+  async function submitAiWord(event) {
+    event?.preventDefault?.();
+    if (!inAiMode || aiState.phase !== 'battle') {
+      return;
+    }
+
+    const rawWord = String(aiWord || '').trim().toLowerCase();
+    const leftLetter = aiState.swapped ? aiState.letters[2] : aiState.letters[1];
+    const rightLetter = aiState.swapped ? aiState.letters[1] : aiState.letters[2];
+
+    if (rawWord.length < 4) {
+      setAiFeedback('error');
+      setAiState((prev) => ({
+        ...prev,
+        status: { type: 'error', key: 'invalidLength' }
+      }));
+      return;
+    }
+
+    if (!/^[a-z]+$/.test(rawWord)) {
+      setAiFeedback('error');
+      setAiState((prev) => ({
+        ...prev,
+        status: { type: 'error', key: 'onlyLetters' }
+      }));
+      return;
+    }
+
+    if (!rawWord.startsWith(String(leftLetter || '').toLowerCase())) {
+      setAiFeedback('error');
+      setAiState((prev) => ({
+        ...prev,
+        status: {
+          type: 'error',
+          key: 'startMismatch',
+          params: { letter: leftLetter }
+        }
+      }));
+      return;
+    }
+
+    if (!rawWord.endsWith(String(rightLetter || '').toLowerCase())) {
+      setAiFeedback('error');
+      setAiState((prev) => ({
+        ...prev,
+        status: {
+          type: 'error',
+          key: 'endMismatch',
+          params: { letter: rightLetter }
+        }
+      }));
+      return;
+    }
+
+    const roundSnapshot = aiState.round;
+    const validationResult = await validateEnglishWord(rawWord);
+
+    if (!validationResult.valid) {
+      const key = resolveValidationReason(validationResult.reason);
+      setAiFeedback('error');
+      setAiState((prev) => {
+        if (prev.phase !== 'battle' || prev.round !== roundSnapshot) {
+          return prev;
+        }
+        return {
+          ...prev,
+          status: { type: 'error', key }
+        };
+      });
+      return;
+    }
+
+    setAiFeedback('success');
+    setBurstSeed((prev) => prev + 1);
+    setAiWord('');
+    setAiState((prev) => {
+      if (prev.phase !== 'battle' || prev.round !== roundSnapshot) {
+        return prev;
+      }
+      return {
+        ...prev,
+        phase: 'round_end',
+        battleSecondsLeft: 0,
+        score: prev.score + 1,
+        status: {
+          type: 'success',
+          key: 'successHit',
+          params: {
+            name: sanitizeIdentity(identity) || text.you,
+            word: rawWord.toUpperCase()
+          }
+        }
+      };
+    });
+  }
+
+  function nextAiRound() {
+    if (!inAiMode) {
+      return;
+    }
+    clearAiSetupTimers();
+    setAiLocalLetter('');
+    setAiWord('');
+    setAiFeedback(null);
+    setAiState((prev) => ({
+      ...prev,
+      phase: 'setup',
+      countdown: null,
+      swapped: false,
+      letters: { 1: '', 2: '' },
+      battleSecondsLeft: null,
+      round: prev.round + 1,
+      status: { type: 'info', key: 'aiRoundReset' }
+    }));
+  }
+
+  function resetAiMatch() {
+    if (!inAiMode) {
+      return;
+    }
+    clearAiSetupTimers();
+    setAiState(EMPTY_AI_STATE);
+    setAiLocalLetter('');
+    setAiWord('');
+    setAiFeedback(null);
   }
 
   function createRoom() {
@@ -1657,11 +2196,12 @@ export default function App() {
   }
 
   return (
-    <div
-      className={`game-shell theme-${theme} min-h-screen px-4 py-6 text-slate-50 sm:px-6 lg:px-8 ${
-        showMobileBattleBar ? 'pb-28' : ''
-      }`}
-    >
+    <MotionConfig reducedMotion={isPerformanceMode ? 'always' : 'never'}>
+      <div
+        className={`game-shell theme-${theme} min-h-screen px-4 py-6 text-slate-50 sm:px-6 lg:px-8 ${
+          showMobileBattleBar ? 'pb-28' : ''
+        } ${isPerformanceMode ? 'perf-lite' : ''}`}
+      >
       <div className="mx-auto max-w-6xl">
         <motion.header
           className="glass-card shimmer-card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
@@ -1712,13 +2252,23 @@ export default function App() {
           </div>
         </motion.header>
 
-        {!inRoom && (
+        {showLobby && (
           <motion.section
             className="glass-card shimmer-card mt-6 p-5 sm:p-6"
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.38, ease: 'easeOut' }}
           >
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRulesModal(true)}
+                className="neo-btn rounded-xl border border-cyan-300/55 bg-cyan-500/18 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/28"
+              >
+                {text.rulesButton}
+              </button>
+            </div>
+
             <div className="rounded-xl border border-cyan-300/20 bg-slate-900/35 p-4">
               <label className="mb-2 block text-sm font-semibold text-cyan-100">{text.accountLabel}</label>
               <input
@@ -1734,7 +2284,7 @@ export default function App() {
               <p className="mt-2 text-xs text-slate-300">{text.accountHint}</p>
             </div>
 
-            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto_auto_auto_auto]">
               <input
                 value={roomCodeInput}
                 onChange={(event) => setRoomCodeInput(sanitizeRoomCode(event.target.value))}
@@ -1765,6 +2315,219 @@ export default function App() {
               >
                 {text.spectateRoom}
               </button>
+              <button
+                type="button"
+                onClick={openAiMode}
+                className="neo-btn rounded-xl border border-emerald-300/60 bg-emerald-500/20 px-4 py-3 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
+              >
+                {text.aiMode}
+              </button>
+            </div>
+          </motion.section>
+        )}
+
+        {!inRoom && inAiMode && (
+          <motion.section
+            className="glass-card shimmer-card mt-6 p-5 sm:p-6"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.34, ease: 'easeOut' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-cyan-100">{text.aiModeTitle}</h2>
+                <p className="mt-1 text-sm text-slate-300">{text.aiModeDesc}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-lg border border-cyan-300/45 bg-cyan-500/16 px-3 py-1.5 text-xs font-semibold text-cyan-100">
+                  {text.score}: {aiState.score}
+                </span>
+                <span className="rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-100">
+                  {text.aiRound}: {aiState.round}
+                </span>
+                <button
+                  type="button"
+                  onClick={resetAiMatch}
+                  className="neo-btn rounded-lg border border-rose-300/45 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/25"
+                >
+                  {text.aiReset}
+                </button>
+                <button
+                  type="button"
+                  onClick={exitAiMode}
+                  className="neo-btn rounded-lg border border-amber-300/55 bg-amber-500/18 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-500/28"
+                >
+                  {text.aiExit}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_1.6fr_1fr]">
+              <div className="rounded-xl border border-white/15 bg-white/5 p-4">
+                <h3 className="text-sm font-semibold tracking-wide text-slate-100">{text.you}</h3>
+                <div className="mt-3">
+                  <MaskedLetterInput
+                    value={aiLocalLetter}
+                    onChange={setAiLocalLetter}
+                    disabled={aiState.phase !== 'setup'}
+                    label={text.hiddenLetter}
+                    hint={text.hiddenHint}
+                    compact
+                    showHint={false}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={startAiRound}
+                  disabled={aiState.phase !== 'setup' || !aiLocalLetter}
+                  className={`neo-btn mt-3 w-full rounded-lg border border-cyan-300/60 bg-cyan-500/20 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/30 ${
+                    aiState.phase !== 'setup' || !aiLocalLetter ? 'cursor-not-allowed opacity-45' : ''
+                  }`}
+                >
+                  {text.aiStartRound}
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-white/15 bg-white/5 p-4">
+                {aiState.phase === 'battle' && aiBattleSecondsLeft !== null && (
+                  <div className="mb-3 w-full">
+                    <div className="flex items-center justify-between text-[11px] font-semibold tracking-[0.08em] text-cyan-100/90">
+                      <span>{text.roundTimer}</span>
+                      <span
+                        className={
+                          aiBattleSecondsLeft <= 5
+                            ? 'text-rose-200 drop-shadow-[0_0_8px_rgba(251,113,133,0.65)]'
+                            : ''
+                        }
+                      >
+                        {aiBattleSecondsLeft}s
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full border border-cyan-300/35 bg-slate-900/60">
+                      <motion.div
+                        className={`${aiBattleSecondsLeft <= 5 ? 'bg-rose-400/90' : 'bg-cyan-300/85'} h-full rounded-full`}
+                        style={{ transformOrigin: 'left center' }}
+                        animate={{ scaleX: aiTimerProgress }}
+                        transition={{ duration: 0.28, ease: 'easeOut' }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-[80px_minmax(0,1fr)_80px] items-start gap-2 sm:grid-cols-[100px_minmax(220px,1fr)_100px] sm:gap-3">
+                  <div className="mx-auto text-center">
+                    <motion.div
+                      className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                      animate={{ x: aiState.swapped ? 84 : 0 }}
+                      transition={{ type: 'spring', stiffness: 220, damping: 18 }}
+                    >
+                      {aiState.phase === 'setup' ? '?' : aiState.letters[1] || '?'}
+                    </motion.div>
+                    <p className="mt-2 text-[10px] tracking-[0.15em] text-slate-400 sm:text-xs">{text.startLetter}</p>
+                  </div>
+
+                  <form onSubmit={submitAiWord}>
+                    <motion.div
+                      className="relative"
+                      animate={
+                        aiFeedback === 'error'
+                          ? { x: [0, -9, 8, -7, 5, -3, 0] }
+                          : aiFeedback === 'success'
+                          ? { scale: [1, 1.02, 1] }
+                          : { x: 0, scale: 1 }
+                      }
+                      transition={{ duration: 0.42 }}
+                    >
+                      <input
+                        value={aiWord}
+                        onChange={(event) => setAiWord(event.target.value)}
+                        disabled={aiState.phase !== 'battle'}
+                        className="neon-input w-full rounded-xl px-3 py-3 text-sm sm:px-4 sm:py-4 sm:text-base"
+                        placeholder={text.inputPlaceholder}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                      />
+                      <AnimatePresence>
+                        {aiFeedback === 'success' && (
+                          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                            {particles.map((particle) => (
+                              <motion.span
+                                key={`ai-${particle.id}`}
+                                className="absolute h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(16,185,129,0.9)]"
+                                initial={{ x: 0, y: 0, opacity: 1, scale: 0.9 }}
+                                animate={{
+                                  x: particle.x,
+                                  y: particle.y,
+                                  opacity: 0,
+                                  scale: 0.1
+                                }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: 0.82, delay: particle.delay, ease: 'easeOut' }}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+
+                    <div className="mt-3 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={swapAiLetters}
+                        disabled={aiState.phase !== 'battle'}
+                        className="neo-btn rounded-lg border border-pink-300/60 bg-pink-500/20 px-3 py-1.5 text-xs font-semibold text-pink-100 transition hover:bg-pink-500/30 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        {text.swap}
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={aiState.phase !== 'battle' || !aiWord.trim()}
+                        className="neo-btn rounded-lg border border-emerald-300/60 bg-emerald-500/25 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/35 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        {text.submit}
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="mx-auto text-center">
+                    <motion.div
+                      className={`letter-tile ${isDesktop ? '' : 'compact'}`}
+                      animate={{ x: aiState.swapped ? -84 : 0 }}
+                      transition={{ type: 'spring', stiffness: 220, damping: 18 }}
+                    >
+                      {aiState.phase === 'setup' ? '?' : aiState.letters[2] || '?'}
+                    </motion.div>
+                    <p className="mt-2 text-[10px] tracking-[0.15em] text-slate-400 sm:text-xs">{text.endLetter}</p>
+                  </div>
+                </div>
+
+                {aiState.phase === 'round_end' && (
+                  <div className="mt-4 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={nextAiRound}
+                      className="neo-btn rounded-lg border border-cyan-300/60 bg-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
+                    >
+                      {text.aiNextRound}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-white/15 bg-white/5 p-4">
+                <h3 className="text-sm font-semibold tracking-wide text-slate-100">{text.aiOpponent}</h3>
+                <p className="mt-2 text-xs text-slate-300">
+                  {aiState.phase === 'setup'
+                    ? text.status.aiSetupHint
+                    : aiState.phase === 'battle'
+                    ? text.status.battleReady
+                    : text.status.aiRoundReset}
+                </p>
+                <div className="mt-4 rounded-lg border border-cyan-300/25 bg-cyan-500/8 px-3 py-2 text-xs text-cyan-100">
+                  {text.aiModeDesc}
+                </div>
+              </div>
             </div>
           </motion.section>
         )}
@@ -1982,7 +2745,15 @@ export default function App() {
           {getStatusText(activeStatus, text)}
         </motion.div>
 
-        {inRoom && (
+        {inRoom && !roomUiReady && (
+          <div className="mt-6 rounded-2xl border border-white/12 bg-white/5 p-6">
+            <div className="h-4 w-40 rounded bg-cyan-300/20" />
+            <div className="mt-4 h-28 rounded-xl bg-slate-900/40" />
+            <div className="mt-3 h-10 rounded-xl bg-slate-900/35" />
+          </div>
+        )}
+
+        {inRoom && roomUiReady && (
           <motion.div
             className="mt-6 grid gap-4 xl:grid-cols-[1fr_1.6fr_1fr]"
             initial={{ opacity: 0, y: 24 }}
@@ -2561,6 +3332,84 @@ export default function App() {
       </div>
 
       <AnimatePresence>
+        {showRulesModal && (
+          <motion.div
+            className="fixed inset-0 z-[69] flex items-center justify-center px-4 py-5"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.button
+              type="button"
+              className="absolute inset-0 bg-slate-950/72 backdrop-blur-[2px]"
+              onClick={() => setShowRulesModal(false)}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            />
+            <motion.div
+              className="glass-card shimmer-card relative z-10 w-full max-w-2xl border border-cyan-200/35 p-5 sm:p-6"
+              initial={{ opacity: 0, scale: 0.92, y: 22 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+            >
+              <h3 className="text-lg font-bold tracking-wide text-cyan-100 sm:text-xl">{text.rulesTitle}</h3>
+              <div className="mt-4 max-h-[min(72vh,540px)] space-y-4 overflow-auto pr-1 text-sm text-slate-100/95">
+                <section className="rounded-xl border border-cyan-300/20 bg-cyan-500/8 p-3">
+                  <h4 className="text-sm font-semibold text-cyan-100">{text.rulesIntroTitle}</h4>
+                  <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-200/95 sm:text-sm">
+                    <li>1. {text.rulesIntro1}</li>
+                    <li>2. {text.rulesIntro2}</li>
+                  </ul>
+                </section>
+
+                <section className="rounded-xl border border-cyan-300/20 bg-cyan-500/8 p-3">
+                  <h4 className="text-sm font-semibold text-cyan-100">{text.rulesFlowTitle}</h4>
+                  <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-200/95 sm:text-sm">
+                    <li>1. {text.rulesFlow1}</li>
+                    <li>2. {text.rulesFlow2}</li>
+                    <li>3. {text.rulesFlow3}</li>
+                    <li>4. {text.rulesFlow4}</li>
+                    <li>5. {text.rulesFlow5}</li>
+                  </ul>
+                </section>
+
+                <section className="rounded-xl border border-cyan-300/20 bg-cyan-500/8 p-3">
+                  <h4 className="text-sm font-semibold text-cyan-100">{text.rulesJudgeTitle}</h4>
+                  <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-200/95 sm:text-sm">
+                    <li>1. {text.rulesJudge1}</li>
+                    <li>2. {text.rulesJudge2}</li>
+                    <li>3. {text.rulesJudge3}</li>
+                    <li>4. {text.rulesJudge4}</li>
+                  </ul>
+                </section>
+
+                <section className="rounded-xl border border-cyan-300/20 bg-cyan-500/8 p-3">
+                  <h4 className="text-sm font-semibold text-cyan-100">{text.rulesTipsTitle}</h4>
+                  <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-200/95 sm:text-sm">
+                    <li>1. {text.rulesTip1}</li>
+                    <li>2. {text.rulesTip2}</li>
+                    <li>3. {text.rulesTip3}</li>
+                  </ul>
+                </section>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowRulesModal(false)}
+                  className="neo-btn rounded-lg border border-cyan-300/60 bg-cyan-500/25 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/35"
+                >
+                  {text.rulesClose}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {showLeaveConfirm && (
           <motion.div
             className="fixed inset-0 z-[70] flex items-center justify-center px-4"
@@ -2669,7 +3518,7 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {roomState.phase === 'countdown' && roomState.countdown !== null && (
+        {overlayCountdown !== null && (
           <motion.div
             className="countdown-overlay fixed inset-0 z-50 flex items-center justify-center"
             initial={{ opacity: 0 }}
@@ -2677,16 +3526,16 @@ export default function App() {
             exit={{ opacity: 0 }}
           >
             <AnimatePresence mode="wait">
-              {roomState.countdown > 0 ? (
+              {overlayCountdown > 0 ? (
                 <motion.div
-                  key={roomState.countdown}
+                  key={overlayCountdown}
                   className="countdown-number"
                   initial={{ scale: 0.25, opacity: 0 }}
                   animate={{ scale: 1.15, opacity: 1 }}
                   exit={{ scale: 1.9, opacity: 0 }}
                   transition={{ duration: 0.7, ease: 'easeInOut' }}
                 >
-                  {roomState.countdown}
+                  {overlayCountdown}
                 </motion.div>
               ) : (
                 <motion.div
@@ -2710,6 +3559,7 @@ export default function App() {
         <div className="ambient-orb orb-b" />
         <div className="ambient-orb orb-c" />
       </div>
-    </div>
+      </div>
+    </MotionConfig>
   );
 }

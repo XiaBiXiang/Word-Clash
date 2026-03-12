@@ -54,9 +54,34 @@ body::after {
   animation: starsDrift 18s linear infinite;
 }
 
+body[data-performance='lite']::after {
+  animation: none;
+  opacity: 0.14;
+}
+
 .game-shell {
   position: relative;
   isolation: isolate;
+}
+
+.perf-lite .glass-card {
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 16px 40px rgba(2, 6, 23, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.perf-lite .shimmer-card::before {
+  animation: none;
+  opacity: 0.24;
+}
+
+.perf-lite .headline-glow {
+  animation: none;
+}
+
+.perf-lite .ambient-orb {
+  display: none;
 }
 
 .glass-card {
@@ -373,6 +398,10 @@ body[data-theme='neon']::after {
   animation: tilePulseNeon 3.4s ease-in-out infinite;
 }
 
+.perf-lite.theme-neon .letter-tile {
+  animation: none;
+}
+
 .theme-neon .countdown-number {
   text-shadow:
     0 0 34px rgba(34, 211, 238, 0.9),
@@ -557,6 +586,27 @@ body[data-theme='cream']::after {
   font-family: 'Fraunces', 'Noto Serif SC', serif;
   font-weight: 600;
   box-shadow: 0 6px 14px rgba(122, 83, 57, 0.14);
+}
+
+@media (max-width: 1024px) {
+  .glass-card {
+    backdrop-filter: blur(10px);
+  }
+
+  .ambient-orb {
+    filter: blur(3px);
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after,
+  .shimmer-card::before,
+  .headline-glow,
+  .ambient-orb,
+  .theme-neon .letter-tile {
+    animation: none !important;
+  }
 }
 
 .theme-cream .neon-input {

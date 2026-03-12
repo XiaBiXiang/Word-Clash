@@ -1,52 +1,87 @@
 # 首尾对决 (Word Clash)
 
-支持异地双人实时对战的英语拼写网页游戏，具备：
+一个支持异地实时联机 + 单人人机挑战的英语拼写网页游戏。  
+前端 React + Tailwind + Framer Motion，后端 Express + Socket.IO，容器化部署使用 Nginx + Docker。
 
-- 双人房间联机（Socket.IO）
-- 房主控制（锁房 / 移除对手 / 转移房主）
-- 观战模式（不占玩家席位，可实时聊天）
-- 中英文切换（i18n）
-- 全屏 3-2-1 倒计时动画
-- 字母翻牌揭晓、首尾交换位移动画
-- 单词成功/失败反馈（粒子/抖动）
-- 严格校验：首尾字母、最短长度、词典合法性过滤（排除缩写/专有名词/人名倾向）
-- 回合计时与超时自动结算（服务端权威判定）
-- 房间系统消息时间线（锁房 / 转移房主 / 踢人等操作记录）
+## 核心特性
+
+- 实时双人联机房间（创建 / 加入 / 观战）
+- 房主控制（锁房、移除对手、转移房主）
+- 聊天系统（历史消息保留、时间戳、移动端未读角标）
+- 人机对战模式（AI 随机字母、短时限回合）
+- 三语言界面（中文 / English / 日本語，下拉切换，默认中文并持久化）
+- 两套主题（霓虹 Neon / 白棕 Cream）
+- 全屏 `3-2-1` 倒计时、交换字母动画、成功粒子与失败抖动反馈
+- 单词严格校验（首尾字母、最短长度、词典合法性、缩写/专名过滤）
+- 请求限流保护（防连点、防刷接口）
+- 移动端与桌面端适配 + 性能降级模式（低性能设备自动减动画）
+
+## 游戏模式
+
+### 1) 联机对战
+
+1. 玩家 A 创建房间，分享 6 位房间码。
+2. 玩家 B 输入房间码加入。
+3. 双方在准备阶段各输入 1 个盲填字母并点击 `Ready`。
+4. 倒计时后进入对战：输入单词，或发起交换首尾投票。
+5. 交换必须 `2/2` 双方同意才执行。
+6. 任一玩家命中有效单词，本回合立即结束并计分。
+
+### 2) 人机对战 (VS AI)
+
+1. 大厅点击 `人机对战 / Play VS AI / AI対戦`。
+2. 玩家输入 1 个字母，AI 随机生成另一个字母。
+3. 短倒计时后进入作答阶段（默认 24 秒）。
+4. 玩家按同样规则提交英文单词，命中得分后进入下一回合。
+
+## 技术栈
+
+- Frontend: React 18 + Vite + Tailwind CSS + Framer Motion
+- Backend: Node.js + Express + Socket.IO
+- Validation: Dictionary API + 内置词表兜底
+- Deploy: Nginx (20880) + Docker / Docker Compose
+- CI/CD: GitHub Actions 构建并推送 GHCR 多架构镜像
 
 ## 本地开发
 
 ```bash
-npm install --registry=https://registry.npmjs.org
+npm install
 npm run dev
 ```
-
-可选环境变量：
-
-- `BATTLE_ROUND_SECONDS`：每回合时长（秒），默认 `40`
 
 - 前端地址：`http://localhost:20880`
 - 后端健康检查：`http://localhost:31881/api/healthz`
 
-## Docker 部署（单容器：Nginx + Node）
+可选环境变量：
+
+- `PORT`：后端监听端口（默认 `31881`）
+- `BATTLE_ROUND_SECONDS`：联机模式回合时长（默认 `40`）
+- `DISCONNECT_GRACE_MS`：断线重连保留时长（默认 `12000` 毫秒）
+
+## 生产构建
 
 ```bash
-docker build -t word-clash .
-docker run -d --name word-clash -p 20880:20880 word-clash
+npm run build
+```
+
+## Docker 部署（Nginx + Node 同容器）
+
+```bash
+docker build -t word-clash:latest .
+docker run -d --name word-clash \
+  -p 20880:20880 \
+  -e PORT=30881 \
+  word-clash:latest
 ```
 
 访问：`http://<服务器IP>:20880`
 
-## Docker Compose（推荐给 1Panel）
+## Docker Compose
 
-项目已包含 `docker-compose.yml`，可直接使用：
-
-```bash
-docker compose up -d --build
-```
-
-查看状态：
+仓库内置 `docker-compose.yml`（默认使用 `localhost/word-clash:amd64` 镜像）：
 
 ```bash
+docker compose up -d
 docker compose ps
 docker compose logs -f
 ```
@@ -57,44 +92,40 @@ docker compose logs -f
 docker compose down
 ```
 
-## GitHub 自动打包镜像（GHCR）
+如果你希望直接使用 GHCR 镜像，请把 `docker-compose.yml` 里的 `image` 改为：
 
-仓库已内置 GitHub Actions 工作流：
-
-- 文件：`.github/workflows/docker-publish.yml`
-- 触发：`push main`、`v* tag`、`workflow_dispatch`
-- PR：仅构建检查，不推送
-- 主分支/标签：自动构建并推送多架构镜像（`amd64` + `arm64`）到 GHCR
-
-镜像地址规则：
-
-- `ghcr.io/<你的GitHub用户名小写>/word-clash:latest`
-- 例如本仓库：`ghcr.io/xiabixiang/word-clash:latest`
-
-首次启用建议：
-
-1. 仓库 `Settings -> Actions -> General` 确保允许工作流运行。
-2. 首次推送后到 `Packages` 页面，将镜像可见性改为 `Public`（如果你希望任何人可拉取）。
-3. 服务器拉取命令示例：
-
-```bash
-docker pull ghcr.io/xiabixiang/word-clash:latest
+```text
+ghcr.io/xiabixiang/word-clash:latest
 ```
 
-### 1Panel 部署建议
+## GitHub Actions / GHCR
 
-1. 在 1Panel 新建应用，导入本项目目录中的 `docker-compose.yml`。
-2. 将服务端口映射保持为 `20880:20880`。
-3. 启动后访问 `http://你的服务器公网IP:20880`。
-4. 如果你使用云服务器安全组，请放行 TCP `20880`。
+工作流文件：`.github/workflows/docker-publish.yml`
 
-## 对战方式
+- 触发：`push main`、`v* tag`、`workflow_dispatch`
+- PR：仅构建，不推送
+- 主分支/标签：推送 `linux/amd64` + `linux/arm64` 镜像到 GHCR
+- 已关闭 `provenance` / `sbom`，避免产生 `unknown/unknown` 平台条目
 
-1. 玩家 A 打开页面，点击“创建房间”，得到 6 位房间码。
-2. 玩家 B 打开同一地址，输入房间码并“加入房间”。
-3. 双方各自在自己端输入盲填字母（输入过程仅显示 `•`），点击 Ready。
-4. 系统倒计时后进入对战阶段，双方可实时同步输入单词并抢分。
+镜像地址示例：
+
+- `ghcr.io/xiabixiang/word-clash:latest`
+
+## 项目结构
+
+```text
+.
+├── src/                 # React 前端
+│   ├── App.jsx          # 主界面与交互逻辑
+│   ├── index.css        # 主题与动画样式
+│   └── utils/wordValidation.js
+├── server/index.js      # Socket.IO 房间/对战服务
+├── nginx.conf           # 20880 端口与反向代理
+├── Dockerfile
+├── docker-compose.yml
+└── .github/workflows/docker-publish.yml
+```
 
 ## License
 
-本项目使用 [MIT License](./LICENSE)，可自由商用、修改与分发。
+本项目采用 [MIT License](./LICENSE)。

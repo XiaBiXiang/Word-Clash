@@ -136,6 +136,7 @@ function buildPublicState(room) {
   return {
     roomCode: room.code,
     phase: room.phase,
+    roundId: room.roundId,
     countdown: room.countdown,
     swapped: room.swapped,
     swapVotes,
@@ -344,7 +345,6 @@ function startBattleTimer(room) {
 
     room.battleSecondsLeft = Math.max(0, Number(room.battleSecondsLeft || 0) - 1);
     if (room.battleSecondsLeft > 0) {
-      emitRoomState(room);
       return;
     }
 
