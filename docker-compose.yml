@@ -1,0 +1,16 @@
+services:
+  word-clash:
+    image: localhost/word-clash:amd64
+    container_name: word-clash
+    restart: unless-stopped
+    ports:
+      - "20880:20880"
+    environment:
+      - PORT=30881
+      - TZ=Asia/Singapore
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:20880/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
