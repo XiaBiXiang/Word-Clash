@@ -1391,9 +1391,13 @@ export default function App() {
       key: roomState.status.key,
       params: roomState.status.params || {}
     });
-    if (lastStatusRef.current !== statusSignature && (playerId || roomRole === 'spectator')) {
+    if (lastStatusRef.current === statusSignature) {
+      return;
+    }
+    lastStatusRef.current = statusSignature;
+
+    if (playerId || roomRole === 'spectator') {
       pushToast(roomState.status.type, roomState.status.key, roomState.status.params || {});
-      lastStatusRef.current = statusSignature;
     }
 
     if (roomState.status.key === 'lettersSwapped') {
@@ -1628,7 +1632,12 @@ export default function App() {
   const activeStatus = inRoom ? roomState.status : inAiMode ? aiState.status : lobbyStatus;
   const statusClass = STATUS_COLOR[activeStatus?.type] || STATUS_COLOR.info;
   const useCompactActions = !isDesktop;
-  const showMobileBattleBar = Boolean(playerId && roomRole === 'player' && !isDesktop && roomState.phase === 'battle');
+  const showMobileActionBar = Boolean(
+    playerId &&
+      roomRole === 'player' &&
+      !isDesktop &&
+      (roomState.phase === 'battle' || roomState.phase === 'round_end')
+  );
   const hostPlayerId = Number(roomState.hostPlayerId || 1);
   const roomLocked = Boolean(roomState.roomLocked);
   const isHost = Boolean(playerId && Number(playerId) === hostPlayerId);
@@ -2264,7 +2273,7 @@ export default function App() {
     <MotionConfig reducedMotion={isPerformanceMode ? 'always' : 'never'}>
       <div
         className={`game-shell theme-${theme} min-h-screen px-4 py-6 text-slate-50 sm:px-6 lg:px-8 ${
-          showMobileBattleBar ? 'pb-28' : ''
+          showMobileActionBar ? 'pb-28' : ''
         } ${isPerformanceMode ? 'perf-lite' : ''}`}
       >
       <div className="mx-auto max-w-6xl">
@@ -2746,13 +2755,6 @@ export default function App() {
                     <>
                       <button
                         type="button"
-                        onClick={resetRound}
-                        className="neo-btn rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-white/20"
-                      >
-                        {text.nextRound}
-                      </button>
-                      <button
-                        type="button"
                         onClick={resetMatch}
                         className="neo-btn rounded-lg border border-rose-300/45 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-500/25"
                       >
@@ -2833,13 +2835,6 @@ export default function App() {
                     </button>
                     {roomRole === 'player' && (
                       <>
-                        <button
-                          type="button"
-                          onClick={resetRound}
-                          className="neo-btn rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-white/20"
-                        >
-                          {text.nextRound}
-                        </button>
                         <button
                           type="button"
                           onClick={resetMatch}
@@ -3166,6 +3161,17 @@ export default function App() {
                       {text.submit}
                     </button>
                   </div>
+                  {roomRole === 'player' && roomState.phase === 'round_end' && (
+                    <div className="mt-3 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={resetRound}
+                        className="neo-btn rounded-xl border border-cyan-300/60 bg-cyan-500/22 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/32"
+                      >
+                        {text.nextRound}
+                      </button>
+                    </div>
+                  )}
                 </form>
                 </div>
 
@@ -3384,7 +3390,7 @@ export default function App() {
       </div>
 
       <AnimatePresence>
-        {showMobileBattleBar && (
+        {showMobileActionBar && (
           <motion.div
             className="fixed inset-x-0 bottom-0 z-[66] px-3 pb-[calc(0.65rem+env(safe-area-inset-bottom))] sm:hidden"
             initial={{ opacity: 0, y: 26 }}
@@ -3393,42 +3399,54 @@ export default function App() {
             transition={{ duration: 0.22, ease: 'easeOut' }}
           >
             <div className="glass-card shimmer-card mx-auto flex w-full max-w-3xl items-center gap-2 rounded-2xl border border-cyan-300/35 bg-slate-950/72 p-2 shadow-[0_-12px_32px_rgba(2,6,23,0.55)] backdrop-blur-xl">
-              <button
-                type="button"
-                onClick={swapLetters}
-                disabled={roomState.phase !== 'battle'}
-                className={`neo-btn inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-xl px-2.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${
-                  mySwapVoted
-                    ? 'border border-amber-300/70 bg-amber-500/22 text-amber-100 hover:bg-amber-500/30'
-                    : 'border border-pink-300/60 bg-pink-500/20 text-pink-100 hover:bg-pink-500/30'
-                }`}
-              >
-                <motion.span
-                  animate={{ rotate: roomState.swapped ? 180 : 0 }}
-                  transition={{ duration: 0.35 }}
-                >
-                  ⇄
-                </motion.span>
-                <span>{text.swap}</span>
-                <span
-                  className={`rounded-md px-1 py-0.5 text-[10px] leading-none ${
-                    mySwapVoted
-                      ? 'border border-amber-200/45 bg-amber-500/18 text-amber-100'
-                      : 'border border-pink-200/45 bg-pink-500/15 text-pink-100'
-                  }`}
-                >
-                  {swapProgress}/2
-                </span>
-              </button>
+              {roomState.phase === 'battle' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={swapLetters}
+                    disabled={roomState.phase !== 'battle'}
+                    className={`neo-btn inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-xl px-2.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                      mySwapVoted
+                        ? 'border border-amber-300/70 bg-amber-500/22 text-amber-100 hover:bg-amber-500/30'
+                        : 'border border-pink-300/60 bg-pink-500/20 text-pink-100 hover:bg-pink-500/30'
+                    }`}
+                  >
+                    <motion.span
+                      animate={{ rotate: roomState.swapped ? 180 : 0 }}
+                      transition={{ duration: 0.35 }}
+                    >
+                      ⇄
+                    </motion.span>
+                    <span>{text.swap}</span>
+                    <span
+                      className={`rounded-md px-1 py-0.5 text-[10px] leading-none ${
+                        mySwapVoted
+                          ? 'border border-amber-200/45 bg-amber-500/18 text-amber-100'
+                          : 'border border-pink-200/45 bg-pink-500/15 text-pink-100'
+                      }`}
+                    >
+                      {swapProgress}/2
+                    </span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={submitWord}
-                disabled={roomState.phase !== 'battle' || !word.trim()}
-                className="neo-btn min-w-[88px] rounded-xl border border-emerald-300/60 bg-emerald-500/25 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/35 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {text.submit}
-              </button>
+                  <button
+                    type="button"
+                    onClick={submitWord}
+                    disabled={roomState.phase !== 'battle' || !word.trim()}
+                    className="neo-btn min-w-[88px] rounded-xl border border-emerald-300/60 bg-emerald-500/25 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/35 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {text.submit}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resetRound}
+                  className="neo-btn w-full rounded-xl border border-cyan-300/60 bg-cyan-500/22 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/32"
+                >
+                  {text.nextRound}
+                </button>
+              )}
             </div>
           </motion.div>
         )}

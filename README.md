@@ -38,7 +38,7 @@
 
 - Frontend: React 18 + Vite + Tailwind CSS + Framer Motion
 - Backend: Node.js + Express + Socket.IO
-- Validation: Dictionary API + 内置词表兜底
+- Validation: Dictionary API + Datamuse + 内置词表兜底（可选离线宽松模式）
 - Deploy: Nginx (20880) + Docker / Docker Compose
 - CI/CD: GitHub Actions 构建并推送 GHCR 多架构镜像
 
@@ -57,6 +57,7 @@ npm run dev
 - `PORT`：后端监听端口（默认 `31881`）
 - `BATTLE_ROUND_SECONDS`：联机模式回合时长（默认 `40`）
 - `DISCONNECT_GRACE_MS`：断线重连保留时长（默认 `12000` 毫秒）
+- `VITE_ALLOW_OFFLINE_RELAXED`：当前端在线词典不可达且本地词库未命中时，是否启用离线宽松校验（`true/1/on/yes` 开启，默认关闭）
 
 ## 生产构建
 

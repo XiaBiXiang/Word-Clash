@@ -39,6 +39,14 @@ const BLOCKED_DEFINITION_PATTERNS = [
   /a female given name/i
 ];
 
+const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
+const OFFLINE_RELAXED_FLAG = String(import.meta.env.VITE_ALLOW_OFFLINE_RELAXED || '')
+  .trim()
+  .toLowerCase();
+const ALLOW_OFFLINE_RELAXED = TRUE_VALUES.has(OFFLINE_RELAXED_FLAG);
+const OFFLINE_VOWEL_PATTERN = /[aeiouy]/;
+const FOUR_REPEAT_PATTERN = /(.)\1\1\1/;
+
 const FALLBACK_WORDS = new Set([
   'about',
   'above',
@@ -477,6 +485,22 @@ const FALLBACK_WORDS = new Set([
 
 const cache = new Map();
 
+function validateByOfflineRelaxed(word) {
+  if (!/^[a-z]{4,}$/.test(word)) {
+    return { valid: false, reason: 'dictionary_unreachable' };
+  }
+  if (!OFFLINE_VOWEL_PATTERN.test(word)) {
+    return { valid: false, reason: 'dictionary_unreachable' };
+  }
+  if (FOUR_REPEAT_PATTERN.test(word)) {
+    return { valid: false, reason: 'dictionary_unreachable' };
+  }
+  if (BLOCKED_WORDS.has(word)) {
+    return { valid: false, reason: 'blocked_word' };
+  }
+  return { valid: true, source: 'offline_relaxed' };
+}
+
 function hasBlockedDefinition(meanings) {
   for (const meaning of meanings) {
     const definitions = Array.isArray(meaning.definitions) ? meaning.definitions : [];
@@ -517,6 +541,56 @@ function timeoutSignal(timeoutMs) {
   };
 }
 
+async function validateByDictionaryApi(word) {
+  const dictionaryUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`;
+  const { signal, release } = timeoutSignal(5000);
+  try {
+    const response = await fetch(dictionaryUrl, { signal });
+    if (!response.ok) {
+      return { checked: true, valid: false, reason: 'non_common_word' };
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload) || payload.length === 0) {
+      return { checked: true, valid: false, reason: 'non_common_word' };
+    }
+
+    const exactEntries = payload.filter(
+      (entry) => String(entry.word || '').toLowerCase() === word
+    );
+    const entries = exactEntries.length > 0 ? exactEntries : payload;
+    const valid = entries.some((entry) => hasValidMeaning(entry));
+    return valid
+      ? { checked: true, valid: true, source: 'dictionary_api' }
+      : { checked: true, valid: false, reason: 'non_common_word' };
+  } finally {
+    release();
+  }
+}
+
+async function validateByDatamuse(word) {
+  const datamuseUrl = `https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&max=8`;
+  const { signal, release } = timeoutSignal(3500);
+  try {
+    const response = await fetch(datamuseUrl, { signal });
+    if (!response.ok) {
+      return { checked: false };
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      return { checked: true, valid: false, reason: 'non_common_word' };
+    }
+
+    const matched = payload.some((item) => String(item?.word || '').toLowerCase() === word);
+    return matched
+      ? { checked: true, valid: true, source: 'datamuse' }
+      : { checked: true, valid: false, reason: 'non_common_word' };
+  } finally {
+    release();
+  }
+}
+
 export async function validateEnglishWord(rawWord) {
   const word = String(rawWord || '').trim().toLowerCase();
 
@@ -532,35 +606,42 @@ export async function validateEnglishWord(rawWord) {
     return cache.get(word);
   }
 
-  const dictionaryUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`;
-
+  let providerReachable = false;
   try {
-    const { signal, release } = timeoutSignal(5000);
-    const response = await fetch(dictionaryUrl, { signal });
-    release();
-
-    if (response.ok) {
-      const payload = await response.json();
-      if (Array.isArray(payload) && payload.length > 0) {
-        const exactEntries = payload.filter(
-          (entry) => String(entry.word || '').toLowerCase() === word
-        );
-        const entries = exactEntries.length > 0 ? exactEntries : payload;
-        const valid = entries.some((entry) => hasValidMeaning(entry));
-        const result = valid
-          ? { valid: true, source: 'dictionary_api' }
-          : { valid: false, reason: 'non_common_word' };
-        cache.set(word, result);
-        return result;
-      }
+    const primary = await validateByDictionaryApi(word);
+    if (primary.checked) {
+      providerReachable = true;
+      const result = primary.valid
+        ? { valid: true, source: primary.source }
+        : { valid: false, reason: primary.reason || 'non_common_word' };
+      cache.set(word, result);
+      return result;
     }
   } catch {
-    // Network failure falls through to local fallback list.
+    // Primary provider unavailable, continue to secondary provider.
+  }
+
+  try {
+    const secondary = await validateByDatamuse(word);
+    if (secondary.checked) {
+      providerReachable = true;
+      const result = secondary.valid
+        ? { valid: true, source: secondary.source }
+        : { valid: false, reason: secondary.reason || 'non_common_word' };
+      cache.set(word, result);
+      return result;
+    }
+  } catch {
+    // Secondary provider unavailable, fallback to local list.
   }
 
   const fallbackResult = FALLBACK_WORDS.has(word)
     ? { valid: true, source: 'embedded_words' }
-    : { valid: false, reason: 'dictionary_unreachable' };
+    : providerReachable
+      ? { valid: false, reason: 'non_common_word' }
+      : ALLOW_OFFLINE_RELAXED
+        ? validateByOfflineRelaxed(word)
+        : { valid: false, reason: 'dictionary_unreachable' };
 
   cache.set(word, fallbackResult);
   return fallbackResult;
