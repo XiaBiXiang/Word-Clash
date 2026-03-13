@@ -43,7 +43,7 @@ const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const OFFLINE_RELAXED_FLAG = String(import.meta.env.VITE_ALLOW_OFFLINE_RELAXED || '')
   .trim()
   .toLowerCase();
-const ALLOW_OFFLINE_RELAXED = TRUE_VALUES.has(OFFLINE_RELAXED_FLAG);
+const ALLOW_OFFLINE_RELAXED = OFFLINE_RELAXED_FLAG ? TRUE_VALUES.has(OFFLINE_RELAXED_FLAG) : true;
 const OFFLINE_VOWEL_PATTERN = /[aeiouy]/;
 const FOUR_REPEAT_PATTERN = /(.)\1\1\1/;
 

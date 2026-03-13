@@ -57,7 +57,7 @@ npm run dev
 - `PORT`：后端监听端口（默认 `31881`）
 - `BATTLE_ROUND_SECONDS`：联机模式回合时长（默认 `40`）
 - `DISCONNECT_GRACE_MS`：断线重连保留时长（默认 `12000` 毫秒）
-- `VITE_ALLOW_OFFLINE_RELAXED`：当前端在线词典不可达且本地词库未命中时，是否启用离线宽松校验（`true/1/on/yes` 开启，默认关闭）
+- `VITE_ALLOW_OFFLINE_RELAXED`：当前端在线词典不可达且本地词库未命中时，是否启用离线宽松校验（`true/1/on/yes` 开启，默认开启；设置为 `false` 即可关闭）
 
 ## 生产构建
 
