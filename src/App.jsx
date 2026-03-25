@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { validateEnglishWord } from './utils/wordValidation.js';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || window.location.origin;
+const PROJECT_GITHUB_URL = 'https://github.com/XiaBiXiang/Word-Clash';
 const IDENTITY_STORAGE_KEY = 'word-clash-identity';
 const CLIENT_ID_STORAGE_KEY = 'word-clash-client-id';
 const THEME_STORAGE_KEY = 'word-clash-theme';
@@ -66,6 +67,7 @@ const I18N = {
     subtitle: 'Word Clash · 实时联机版',
     languageTag: 'EN',
     languageLabel: '语言',
+    githubLinkLabel: '查看 GitHub 项目',
     themeNeon: '霓虹',
     themeCream: '白棕',
     player: '玩家',
@@ -244,6 +246,7 @@ const I18N = {
     subtitle: '首尾对决 · Realtime Online',
     languageTag: '中',
     languageLabel: 'Language',
+    githubLinkLabel: 'View GitHub project',
     themeNeon: 'Neon',
     themeCream: 'Cream',
     player: 'Player',
@@ -422,6 +425,7 @@ const I18N = {
     subtitle: '首尾対決 · リアルタイム対戦',
     languageTag: '中',
     languageLabel: '言語',
+    githubLinkLabel: 'GitHubプロジェクトを見る',
     themeNeon: 'ネオン',
     themeCream: 'クリーム',
     player: 'プレイヤー',
@@ -740,6 +744,14 @@ function getToastText(toast, text) {
   return format(template, params);
 }
 
+function GitHubIcon({ className = 'h-5 w-5' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M12 2C6.477 2 2 6.589 2 12.248c0 4.526 2.865 8.367 6.839 9.722.5.096.682-.222.682-.494 0-.244-.009-.891-.014-1.749-2.782.617-3.369-1.37-3.369-1.37-.455-1.179-1.11-1.493-1.11-1.493-.908-.636.069-.623.069-.623 1.004.072 1.532 1.054 1.532 1.054.892 1.566 2.341 1.114 2.91.852.091-.664.35-1.114.636-1.37-2.221-.259-4.555-1.138-4.555-5.063 0-1.118.389-2.032 1.029-2.749-.103-.26-.446-1.303.097-2.717 0 0 .84-.277 2.75 1.05A9.303 9.303 0 0 1 12 6.836c.85.004 1.706.118 2.504.346 1.909-1.327 2.748-1.05 2.748-1.05.545 1.414.202 2.457.099 2.717.641.717 1.028 1.631 1.028 2.749 0 3.935-2.337 4.801-4.566 5.055.359.318.678.946.678 1.907 0 1.377-.012 2.487-.012 2.825 0 .274.18.594.688.493C19.138 20.611 22 16.772 22 12.248 22 6.589 17.523 2 12 2Z" />
+    </svg>
+  );
+}
+
 function MaskedLetterInput({ value, onChange, disabled, label, hint, compact = false, showHint = true }) {
   function normalizeLetter(input) {
     return String(input || '')
@@ -1032,6 +1044,7 @@ export default function App() {
 
   const socketRef = useRef(null);
   const lastStatusRef = useRef('');
+  const lastScoreEventRef = useRef('');
   const chatListRef = useRef(null);
   const previousChatCountRef = useRef(0);
   const previousSystemCountRef = useRef(0);
@@ -1142,6 +1155,7 @@ export default function App() {
               setShowMobileSystem(false);
               setShowCompactActions(false);
               lastStatusRef.current = '';
+              lastScoreEventRef.current = '';
               setLobbyStatus({ type: 'error', key: res?.errorKey || 'roomNotFound' });
               pushToast('error', 'rejoinFailed');
               return;
@@ -1182,6 +1196,7 @@ export default function App() {
             setShowMobileSystem(false);
             setShowCompactActions(false);
             lastStatusRef.current = '';
+            lastScoreEventRef.current = '';
             setLobbyStatus({ type: 'error', key: res?.errorKey || 'roomNotFound' });
             pushToast('error', 'rejoinFailed');
             return;
@@ -1239,6 +1254,7 @@ export default function App() {
       setShowCompactActions(false);
       setPendingHostAction(null);
       lastStatusRef.current = '';
+      lastScoreEventRef.current = '';
       setLobbyStatus({ type: 'error', key, params });
       pushToast('error', key, params);
     });
@@ -1364,6 +1380,7 @@ export default function App() {
   useEffect(() => {
     if (!roomCode) {
       setRoomUiReady(false);
+      lastScoreEventRef.current = '';
       return undefined;
     }
 
@@ -1408,16 +1425,6 @@ export default function App() {
       setFeedback('success');
       setFeedbackTick((prev) => prev + 1);
       setBurstSeed((prev) => prev + 1);
-      const scorer = Number(roomState.status?.params?.player);
-      if (scorer === 1 || scorer === 2) {
-        setScoreFlash({
-          player: scorer,
-          name: roomState.status?.params?.name || roomState.playerNames?.[scorer] || `${text.player} ${scorer}`
-        });
-      }
-      if (Number(roomState.status?.params?.player) === Number(playerId)) {
-        setWord('');
-      }
       return;
     }
     if (roomState.status.type === 'error') {
@@ -1425,6 +1432,44 @@ export default function App() {
       setFeedbackTick((prev) => prev + 1);
     }
   }, [playerId, roomRole, roomState.playerNames, roomState.status, text.player]);
+
+  useEffect(() => {
+    if (roomState.status?.type !== 'success' || roomState.status?.key !== 'successHit') {
+      return;
+    }
+
+    const latestHistoryEntry = roomState.history?.[0];
+    if (!latestHistoryEntry?.success) {
+      return;
+    }
+
+    const scoreEventId = String(
+      latestHistoryEntry.id ||
+        `${roomState.roundId}-${latestHistoryEntry.player}-${latestHistoryEntry.word || ''}`
+    );
+    if (lastScoreEventRef.current === scoreEventId) {
+      return;
+    }
+    lastScoreEventRef.current = scoreEventId;
+
+    const scorer = Number(latestHistoryEntry.player || roomState.status?.params?.player);
+    if (scorer !== 1 && scorer !== 2) {
+      return;
+    }
+
+    setScoreFlash({
+      player: scorer,
+      name:
+        latestHistoryEntry.playerName ||
+        roomState.status?.params?.name ||
+        roomState.playerNames?.[scorer] ||
+        `${text.player} ${scorer}`
+    });
+
+    if (scorer === Number(playerId)) {
+      setWord('');
+    }
+  }, [playerId, roomState.history, roomState.playerNames, roomState.roundId, roomState.status, text.player]);
 
   useEffect(() => {
     if (!feedback) {
@@ -2239,6 +2284,7 @@ export default function App() {
       setShowCompactActions(false);
       setPendingHostAction(null);
       lastStatusRef.current = '';
+      lastScoreEventRef.current = '';
     };
 
     if (!socket) {
@@ -2290,7 +2336,7 @@ export default function App() {
             <p className="mt-1 text-sm text-cyan-100/90">{text.subtitle}</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <span
               className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
                 socketState === 'connected'
@@ -2316,6 +2362,19 @@ export default function App() {
                 ))}
               </select>
             </label>
+            <motion.a
+              href={PROJECT_GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="neo-btn inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200/20 bg-slate-950/35 text-slate-100 transition hover:border-cyan-300/55 hover:bg-cyan-500/18 hover:text-cyan-100"
+              aria-label={text.githubLinkLabel}
+              title={text.githubLinkLabel}
+              whileHover={{ y: -1.5, scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+            >
+              <GitHubIcon />
+              <span className="sr-only">{text.githubLinkLabel}</span>
+            </motion.a>
             <button
               type="button"
               className="neo-btn rounded-xl border border-amber-300/45 bg-amber-500/18 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
