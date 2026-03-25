@@ -40,7 +40,13 @@ const BLOCKED_DEFINITION_PATTERNS = [
 ];
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
-const OFFLINE_RELAXED_FLAG = String(import.meta.env.VITE_ALLOW_OFFLINE_RELAXED || '')
+const RUNTIME_ENV = typeof process !== 'undefined' ? process.env : undefined;
+const OFFLINE_RELAXED_FLAG = String(
+  import.meta.env?.VITE_ALLOW_OFFLINE_RELAXED ??
+    RUNTIME_ENV?.VITE_ALLOW_OFFLINE_RELAXED ??
+    RUNTIME_ENV?.ALLOW_OFFLINE_RELAXED ??
+    ''
+)
   .trim()
   .toLowerCase();
 const ALLOW_OFFLINE_RELAXED = OFFLINE_RELAXED_FLAG ? TRUE_VALUES.has(OFFLINE_RELAXED_FLAG) : true;
