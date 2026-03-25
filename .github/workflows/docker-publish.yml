@@ -10,10 +10,21 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      multi_arch:
+        description: "Build both linux/amd64 and linux/arm64"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
       packages: write
@@ -22,7 +33,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decide build platforms
+        run: |
+          platforms="linux/amd64"
+          needs_qemu="false"
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            platforms="linux/amd64,linux/arm64"
+            needs_qemu="true"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${{ inputs.multi_arch }}" == "true" ]]; then
+            platforms="linux/amd64,linux/arm64"
+            needs_qemu="true"
+          fi
+
+          echo "DOCKER_PLATFORMS=${platforms}" >> "$GITHUB_ENV"
+          echo "NEEDS_QEMU=${needs_qemu}" >> "$GITHUB_ENV"
+          echo "Using Docker platforms: ${platforms}"
+
       - name: Set up QEMU
+        if: env.NEEDS_QEMU == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
@@ -55,25 +84,25 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: false
           provenance: false
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: Build and push (main/tags/manual)
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
           provenance: false
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min

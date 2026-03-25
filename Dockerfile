@@ -8,7 +8,7 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 FROM nginx:alpine
-RUN apk add --no-cache nodejs npm
+RUN apk add --no-cache nodejs
 
 WORKDIR /app
 COPY --from=build /app/node_modules /app/node_modules

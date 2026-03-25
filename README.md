@@ -40,7 +40,7 @@
 - Backend: Node.js + Express + Socket.IO
 - Validation: Dictionary API + Datamuse + 内置词表兜底（可选离线宽松模式）
 - Deploy: Nginx (20880) + Docker / Docker Compose
-- CI/CD: GitHub Actions 构建并推送 GHCR 多架构镜像
+- CI/CD: GitHub Actions 构建并推送 GHCR 镜像（`main` 默认 `amd64`，发布/手动可选多架构）
 
 ## 本地开发
 
@@ -105,7 +105,9 @@ ghcr.io/xiabixiang/word-clash:latest
 
 - 触发：`push main`、`v* tag`、`workflow_dispatch`
 - PR：仅构建，不推送
-- 主分支/标签：推送 `linux/amd64` + `linux/arm64` 镜像到 GHCR
+- 主分支：默认仅推送 `linux/amd64`，避免 `arm64` QEMU 仿真导致构建过慢或卡住
+- Tag 发布：推送 `linux/amd64` + `linux/arm64` 多架构镜像到 GHCR
+- 手动触发：可通过 `multi_arch=true` 选择是否构建 `linux/amd64` + `linux/arm64`
 - 已关闭 `provenance` / `sbom`，避免产生 `unknown/unknown` 平台条目
 
 镜像地址示例：
